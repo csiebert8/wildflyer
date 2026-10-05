@@ -9,13 +9,13 @@ window and a set of **rules** (hard or soft); the tool generates the best
 schedule it can find, saves it, and lets the user change rules and re-run.
 
 The tool has **no knowledge of any specific league**. Everything league-specific
-(teams, venues, dates, blackouts, rest requirements, series lengths) is input,
+(teams, dates, blackouts, rest requirements, series lengths) is input,
 entered per run.
 
 ## 2. Core principles
 
 1. **Game-based, not series-based.** The engine schedules individual games
-   (home team, away team, date, venue). "Series" are not a built-in concept;
+   (home team, away team, date). "Series" are not a built-in concept;
    they emerge from rules such as *min/max consecutive games vs the same
    opponent*. This supports mixed series lengths and single-game leagues with
    no special logic.
