@@ -163,8 +163,9 @@ multi-user access.
    with catalog rule types — no league-specific code.
 2. **Solves the real case:** with those rules (6 teams, 90 games), produces a
    valid schedule, with checks at least as clean as the existing hand-built v2.
-3. **Scale:** a synthetic 30-team league solves to a feasible schedule within a
-   configurable time limit.
+3. **Size:** the MVP targets a league of about 6 teams, 60 days and 30 games
+   per team, solved within the configured time limit. Larger leagues are not
+   an MVP goal.
 4. **Iteration:** changing/toggling a rule and re-running with a base run
    shows exactly what moved.
 5. **Infeasibility:** contradictory hard rules produce a report naming them.
@@ -178,15 +179,14 @@ multi-user access.
    home/away runs, workload windows.
 4. **M4 — Soft rules & reporting:** weighted objective, preferences, balance,
    checks and rules report, infeasibility explanation.
-5. **M5 — Runs:** saved runs, locks, minimize-changes, compare. 30-team
-   scale test.
+5. **M5 — Runs:** saved runs, locks, minimize-changes, compare.
 
 ## 11. Risks
 
 - **Block rules across off days** (`OPPONENT_BLOCK` with gaps allowed) are the
   most complex constraints to model; they get dedicated tests.
-- **Performance at 30 teams** with many sequence rules: mitigated by time
-  limits, returning best-found schedules, and solver tuning.
+- **Solve time** with many sequence rules: mitigated by time limits and
+  returning the best schedule found so far.
 - **Rule ambiguity:** every rule type gets a precise written definition
   (e.g. what counts as "consecutive" when off days intervene) in the template's
   help tab.

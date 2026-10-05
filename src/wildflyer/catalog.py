@@ -116,23 +116,25 @@ _SPECS = [
         "against one opponent with no game against anyone else in between (off days don't "
         "break a block). Min/Max = games per block; N = most off days allowed between "
         "consecutive games inside a block.",
-        {"teams": TEAMS, "opponents": OPPONENTS, "dates": DATES_OPT,
+        {"teams": TEAMS, "opponents": OPPONENTS,
          "min": _f(False, "Minimum games per block"), "max": _f(False, "Maximum games per block"),
          "n": _f(False, "Max off days inside a block (blank = no limit)")},
         "Min = 3, Max = 3, N = 1",
-        needs_min_or_max=True, violation_unit="block",
+        needs_min_or_max=True,
+        violation_unit="game beyond Max; block shorter than Min; gap longer than N",
     ),
     RuleSpec(
         "REMATCH_GAP", "Sequence: opponents",
-        "Minimum days between the end of one block against an opponent and the start of the "
-        "next block against the same opponent.",
+        "Minimum days from the last game of one block against an opponent to the first game of "
+        "the next block against the same opponent (e.g. last game 7/1, N = 14: next block "
+        "starts 7/15 or later).",
         {"teams": TEAMS, "opponents": OPPONENTS, "n": _f(True, "Minimum days between blocks")},
         "N = 14", violation_unit="rematch",
     ),
     RuleSpec(
         "OPPONENT_CHANGE_REST", "Sequence: opponents",
         "Minimum off days between a team's last game against one opponent and its next game "
-        "against a different opponent.",
+        "against a different opponent. Dates/Days filter the day of the next game.",
         {"teams": TEAMS, "dates": DATES_OPT, "n": _f(True, "Minimum off days when switching opponents")},
         "N = 1", violation_unit="switch",
     ),
@@ -140,8 +142,9 @@ _SPECS = [
     RuleSpec(
         "TRAVEL_REST", "Sequence: locations & workload",
         "Minimum off days when a team moves between locations, for moves from a From location "
-        "to a To location. Every game is at the home team's location, so locations are hosting "
-        "team codes, or any / home / away (home = the team's own home games).",
+        "to a different To location. Every game is at the home team's location, so locations are "
+        "hosting team codes, or any / home / away (home = the team's own home games). "
+        "Dates/Days filter the day of the game moved to.",
         {"teams": TEAMS, "from": _f(True, "Location(s) moved from"), "to": _f(True, "Location(s) moved to"),
          "dates": DATES_OPT, "n": _f(True, "Minimum off days between the two games")},
         "From = TEX, To = CAR, N = 2", violation_unit="move",
@@ -149,7 +152,8 @@ _SPECS = [
     RuleSpec(
         "PREFERRED_TRANSITION", "Sequence: locations & workload",
         "When a team leaves a From location for a different location, its next location should "
-        "be a To location.",
+        "be a To location. Role = away applies when the team was visiting the From location; "
+        "Role = home when it was playing at home.",
         {"teams": TEAMS, "role": ROLE, "from": _f(True, "Location(s) left"),
          "to": _f(True, "Location(s) to go to next")},
         "Role = away, From = PDX, To = UTA", violation_unit="move",
@@ -157,12 +161,12 @@ _SPECS = [
     RuleSpec(
         "HOME_AWAY_RUN", "Sequence: locations & workload",
         "Limits the length of a homestand (Role = home) or road trip (Role = away). "
-        "Option = games counts consecutive games; days counts calendar days from first to "
-        "last game of the run.",
+        "Option = games counts consecutive games; days counts calendar days from the first to "
+        "the last game of the run, inclusive. Off days don't break a run.",
         {"teams": TEAMS, "role": _f(True, "home or away"), "max": _f(True, "Maximum run length")},
         "Role = away, Option = days, Max = 14",
         options=("games", "days"), option_default="games", roles=("home", "away"),
-        violation_unit="run",
+        violation_unit="game beyond the limit",
     ),
     RuleSpec(
         "MAX_CONSECUTIVE_GAME_DAYS", "Sequence: locations & workload",
@@ -173,7 +177,8 @@ _SPECS = [
     RuleSpec(
         "GAMES_IN_WINDOW", "Sequence: locations & workload",
         "Number of games a team plays per window. Option = rolling checks every N-day window; "
-        "week checks each Mon-Sun calendar week.",
+        "week checks each Mon-Sun calendar week. Dates/Days limit which games are counted. "
+        "Min applies only to windows that lie entirely inside the season.",
         {"teams": TEAMS, "role": ROLE, "dates": DATES_OPT, "n": _f(False, "Window length in days (rolling)"),
          "min": _f(False, "Minimum games per window"), "max": _f(False, "Maximum games per window")},
         "Option = rolling, N = 7, Max = 4",

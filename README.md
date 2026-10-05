@@ -4,10 +4,10 @@ A constraint-based sports league scheduler. You describe a league and a set of
 hard and soft rules in an Excel workbook, and Wildflyer finds the best schedule
 it can. See [SCOPE.md](SCOPE.md) for the full MVP scope.
 
-**Status:** M2. Input validation and solving for season/volume and
-availability rules, locks, and soft rules. Sequence rules (opponent blocks,
-rematch gaps, travel rest, homestand/road-trip length) come in M3; until then
-they are listed as "not applied" on every run.
+**Status:** M3. Input validation, and solving with all rule types except
+the preference rules (`DATE_PREFERENCE`, `BALANCE`), which come in M4 and are
+listed as "not applied" until then. Sized for leagues of about 6 teams, 60
+days and 30 games per team.
 
 ## Setup
 
@@ -57,5 +57,4 @@ truth for validation and the Help sheet.
 
 ```bash
 pytest
-python scripts/bench_scale.py 30 150 120   # 30-team scale check
 ```

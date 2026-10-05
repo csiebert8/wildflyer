@@ -172,13 +172,18 @@ class TestSoft:
 
 
 def test_unsupported_rules_are_reported_not_applied():
-    result = solved([DOUBLE_RR, R("REMATCH_GAP", id="X", n=5)])
+    result = solved([DOUBLE_RR, R("BALANCE", id="X", hard=False, weight=1, max=1)])
     assert [r.id for r in result.skipped_rules] == ["X"]
 
 
-def test_example_workbook_solves(tmp_path):
+@pytest.fixture(scope="module")
+def example():
     run = load(EXAMPLE).run
-    result = solve(run, time_limit=60)
+    return run, solve(run, time_limit=45)
+
+
+def test_example_workbook_solves(example, tmp_path):
+    run, result = example
     assert result.has_schedule
     assert len(result.games) == 90
     home = Counter(g.home for g in result.games)
@@ -189,6 +194,23 @@ def test_example_workbook_solves(tmp_path):
     assert not any(g.home == "UTA" and g.date.month == 8 for g in result.games)
     out = write_output(tmp_path / "out.xlsx", run, result)
     assert openpyxl.load_workbook(out).sheetnames == ["Grid", "List", "Summary"]
+
+
+def test_example_hard_sequence_rules(example):
+    from sequence_checks import blocks, max_streak, moves, off_days_between, rematch_gaps, sequence
+
+    run, result = example
+    long_moves = {("CAR", "PDX"), ("CAR", "UTA"), ("PDX", "CAR"), ("UTA", "CAR"), ("TEX", "PDX"), ("PDX", "TEX")}
+    for t in run.teams:
+        s = sequence(result.games, t)
+        assert date(2027, 6, 12) <= s[0].date <= date(2027, 6, 15)  # R01
+        for b in blocks(s):  # R04: 3-game series, at most 1 off day inside
+            assert len(b) == 3
+            assert all(off_days_between(a, c) <= 1 for a, c in zip(b, b[1:]))
+        assert min(rematch_gaps(s)) >= 14  # R05
+        for a, b in moves(s):  # R30, R32-R35
+            assert off_days_between(a, b) >= (2 if (a.host, b.host) in long_moves else 1)
+        assert max_streak(s) <= 4  # R36
 
 
 class TestOutput:
@@ -220,7 +242,12 @@ class TestOutput:
 
 
 def test_cli_solve(tmp_path, capsys):
+    from wildflyer.template import write_template
+
+    src = write_template(tmp_path / "in.xlsx", settings={"Season start": START, "Season end": day(13)},
+                         teams=[("T1", "One", ""), ("T2", "Two", ""), ("T3", "Three", "")],
+                         rules=[{"ID": "R1", "Type": "MATCHUP_GAMES", "Role": "home", "Min": 1, "Max": 1}])
     out = tmp_path / "sched.xlsx"
-    assert main(["solve", str(EXAMPLE), "-o", str(out), "--time-limit", "30"]) == 0
+    assert main(["solve", str(src), "-o", str(out), "--time-limit", "10"]) == 0
     assert out.exists()
     assert "Status: optimal" in capsys.readouterr().out

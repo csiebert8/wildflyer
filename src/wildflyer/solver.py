@@ -67,6 +67,7 @@ class ScheduleModel:
         self.days = range(len(self.dates))
         self.teams = list(run.teams)
         self.skipped: list[Rule] = []
+        self._cache: dict[str, dict] = {}
         # (rule, label, linear expression counting violation units)
         self._soft_terms: list[tuple[Rule, str, cp_model.LinearExprT]] = []
 
@@ -102,6 +103,14 @@ class ScheduleModel:
             "GAMES_PER_DAY": self._games_per_day,
             "AVAILABILITY": self._availability,
             "FIXED_GAME": self._fixed_game,
+            "OPPONENT_BLOCK": self._opponent_block,
+            "REMATCH_GAP": self._rematch_gap,
+            "OPPONENT_CHANGE_REST": self._opponent_change_rest,
+            "TRAVEL_REST": self._travel_rest,
+            "PREFERRED_TRANSITION": self._preferred_transition,
+            "HOME_AWAY_RUN": self._home_away_run,
+            "MAX_CONSECUTIVE_GAME_DAYS": self._max_consecutive_game_days,
+            "GAMES_IN_WINDOW": self._games_in_window,
         }
         objective = []
         for rule in run.rules:
@@ -227,6 +236,266 @@ class ScheduleModel:
             if d in self.day_index:
                 self._bound(rule, self.x[home, away, self.day_index[d]], 1,
                             f"{away} @ {home} on {d} not played", lo=1)
+
+    # --- sequence state (built on first use) -----------------------------------------
+    #
+    # A team's games form a sequence with off days in between. Sequence rules are
+    # expressed with per-day state that carries forward across off days:
+    #   last_at[t, h, i]   t's most recent game (on or before day i) was hosted by h
+    #   last_vs[t, o, i]   t's most recent game (on or before day i) was against o
+    #   off[t, i]          consecutive off days ending on day i (0 if t plays on i)
+
+    def _vs(self, t: str, o: str, i: int) -> cp_model.IntVar:
+        """Bool: t plays o (either venue) on day i."""
+        cache = self._cache.setdefault("vs", {})
+        key = (min(t, o), max(t, o), i)
+        if key not in cache:
+            v = cache[key] = self.m.new_bool_var(f"vs_{key[0]}_{key[1]}_{i}")
+            self.m.add(v == self.x[t, o, i] + self.x[o, t, i])
+        return cache[key]
+
+    def _at(self, t: str, h: str, i: int) -> cp_model.IntVar:
+        """Bool: t plays on day i at h's location (h hosting)."""
+        return self.home[t, i] if h == t else self.x[h, t, i]
+
+    def _carry(self, name: str, t: str, event: Callable[[int], cp_model.LinearExprT]) -> list[cp_model.IntVar]:
+        """c[i] = 1 if t's most recent game on or before day i satisfied `event`."""
+        out = []
+        for i in self.days:
+            e, p = event(i), self.plays[t, i]
+            c = self.m.new_bool_var(f"{name}_{i}")
+            if i == 0:
+                self.m.add(c == e)
+            else:
+                prev = out[-1]
+                self.m.add(c >= e)
+                self.m.add(c >= prev - p)
+                self.m.add(c <= e + prev)
+                self.m.add(c <= e + 1 - p)
+            out.append(c)
+        return out
+
+    def _last_at(self, t: str, h: str, i: int) -> cp_model.IntVar:
+        cache = self._cache.setdefault("last_at", {})
+        if (t, h) not in cache:
+            cache[t, h] = self._carry(f"lastat_{t}_{h}", t, lambda i: self._at(t, h, i))
+        return cache[t, h][i]
+
+    def _last_vs(self, t: str, o: str, i: int) -> cp_model.IntVar:
+        cache = self._cache.setdefault("last_vs", {})
+        if (t, o) not in cache:
+            cache[t, o] = self._carry(f"lastvs_{t}_{o}", t, lambda i: self._vs(t, o, i))
+        return cache[t, o][i]
+
+    def _off(self, t: str, i: int) -> cp_model.IntVar:
+        cache = self._cache.setdefault("off", {})
+        if t not in cache:
+            seq = []
+            for j in self.days:
+                v = self.m.new_int_var(0, len(self.dates), f"off_{t}_{j}")
+                self.m.add(v == 0).only_enforce_if(self.plays[t, j])
+                self.m.add(v == (seq[-1] + 1 if seq else 1)).only_enforce_if(~self.plays[t, j])
+                seq.append(v)
+            cache[t] = seq
+        return cache[t][i]
+
+    def _played_before(self, t: str, i: int) -> cp_model.LinearExprT:
+        """1 if t has played at least once on or before day i."""
+        return sum(self._last_at(t, h, i) for h in self.teams)
+
+    def _counter(self, name: str, inc: cp_model.IntVar, reset: list, t: str) -> list[cp_model.IntVar]:
+        """Counts `inc` days; resets to 0 on days t plays with all `reset` literals true;
+        carries over off days."""
+        seq = []
+        for i in self.days:
+            v = self.m.new_int_var(0, len(self.dates), f"{name}_{i}")
+            prev = seq[-1] if seq else 0
+            self.m.add(v == prev + 1).only_enforce_if(inc[i])
+            self.m.add(v == 0).only_enforce_if([self.plays[t, i]] + [r[i] for r in reset])
+            self.m.add(v == prev).only_enforce_if(~self.plays[t, i])
+            seq.append(v)
+        return seq
+
+    def _enforce(self, rule: Rule, build: Callable[[], cp_model.Constraint], lits: list, label: str) -> None:
+        """Add constraint `build()` when all `lits` hold; for soft rules allow breaking it at a cost."""
+        if rule.hard:
+            build().only_enforce_if(lits)
+            return
+        broken = self.m.new_bool_var(f"broken_{rule.id}")
+        build().only_enforce_if(lits + [~broken])
+        self._soft_terms.append((rule, label, broken))
+
+    def _hosts(self, loc, t: str) -> set[str]:
+        hosts = set(loc.hosts)
+        if "any" in loc.keywords:
+            hosts |= set(self.teams)
+        if "home" in loc.keywords:
+            hosts.add(t)
+        if "away" in loc.keywords:
+            hosts |= set(self.teams) - {t}
+        return hosts
+
+    # --- sequence rules ------------------------------------------------------------------
+
+    def _opponent_block(self, rule: Rule) -> None:
+        for t in sorted(rule.teams):
+            for o in self._opponents(rule, t):
+                vs = [self._vs(t, o, i) for i in self.days]
+                # Games so far in the current block vs o (0 once t has played someone else).
+                count = self._counter(f"blk_{t}_{o}", vs, [[~v for v in vs]], t)
+                for i in self.days:
+                    d = self.dates[i]
+                    if rule.max is not None:
+                        self._enforce(rule, lambda i=i: self.m.add(count[i] <= rule.max), [vs[i]],
+                                      f"{t} vs {o}: game {rule.max + 1}+ of a block on {d}")
+                    if rule.min is not None and rule.min > 1 and i > 0:
+                        # Block vs o ended on day i (t now plays someone else).
+                        self._enforce(rule, lambda i=i: self.m.add(count[i - 1] >= rule.min),
+                                      [self.plays[t, i], ~vs[i], self._last_vs(t, o, i - 1)],
+                                      f"{t} vs {o}: block ending before {d} shorter than {rule.min}")
+                    if rule.n is not None and i > 0:
+                        self._enforce(rule, lambda i=i: self.m.add(self._off(t, i - 1) <= rule.n),
+                                      [vs[i], self._last_vs(t, o, i - 1)],
+                                      f"{t} vs {o}: more than {rule.n} off days inside block before {d}")
+                if rule.min is not None and rule.min > 1:
+                    last = len(self.dates) - 1
+                    self._enforce(rule, lambda: self.m.add(count[last] >= rule.min),
+                                  [self._last_vs(t, o, last)],
+                                  f"{t} vs {o}: season-ending block shorter than {rule.min}")
+
+    def _rematch_gap(self, rule: Rule) -> None:
+        n = rule.n
+        done: set[frozenset[str]] = set()
+        for t in sorted(rule.teams):
+            for o in self._opponents(rule, t):
+                if frozenset((t, o)) in done:
+                    continue  # the gap between t and o's blocks is the same from either side
+                done.add(frozenset((t, o)))
+                # since[i] = days since the last game vs o, capped at n.
+                since = []
+                for i in self.days:
+                    v = self.m.new_int_var(0, n, f"since_{t}_{o}_{i}")
+                    vs = self._vs(t, o, i)
+                    self.m.add(v == 0).only_enforce_if(vs)
+                    if since:
+                        step = self.m.new_int_var(0, n, f"step_{t}_{o}_{i}")
+                        self.m.add_min_equality(step, [since[-1] + 1, n])
+                        self.m.add(v == step).only_enforce_if(~vs)
+                    else:
+                        self.m.add(v == n).only_enforce_if(~vs)
+                    since.append(v)
+                for j in range(1, len(self.dates)):
+                    # A new block vs o starts on day j: the previous game vs o must be >= n days back.
+                    self._enforce(rule, lambda j=j: self.m.add(since[j - 1] + 1 >= n),
+                                  [self._vs(t, o, j), ~self._last_vs(t, o, j - 1)],
+                                  f"{t} vs {o}: rematch on {self.dates[j]} within {n} days")
+
+    def _opponent_change_rest(self, rule: Rule) -> None:
+        days = set(self._rule_days(rule))
+        for t in sorted(rule.teams):
+            for o in self._opponents(rule, t):
+                for j in range(1, len(self.dates)):
+                    if j not in days:
+                        continue
+                    # t plays o on day j after last playing someone else.
+                    switched = self.m.new_bool_var(f"switch_{t}_{o}_{j}")
+                    self.m.add(switched >= self._vs(t, o, j) - self._last_vs(t, o, j - 1)
+                               + self._played_before(t, j - 1) - 1)
+                    self._enforce(rule, lambda j=j: self.m.add(self._off(t, j - 1) >= rule.n), [switched],
+                                  f"{t}: fewer than {rule.n} off days before playing {o} on {self.dates[j]}")
+
+    def _travel_rest(self, rule: Rule) -> None:
+        days = set(self._rule_days(rule))
+        for t in sorted(rule.teams):
+            origins, dests = self._hosts(rule.from_loc, t), self._hosts(rule.to_loc, t)
+            for j in range(1, len(self.dates)):
+                if j not in days:
+                    continue
+                for b in sorted(dests):
+                    froms = [a for a in origins if a != b]
+                    if not froms:
+                        continue
+                    moved = self.m.new_bool_var(f"move_{rule.id}_{t}_{b}_{j}")
+                    self.m.add(moved >= self._at(t, b, j) + sum(self._last_at(t, a, j - 1) for a in froms) - 1)
+                    self._enforce(rule, lambda j=j: self.m.add(self._off(t, j - 1) >= rule.n), [moved],
+                                  f"{t}: moved to {b} on {self.dates[j]} with fewer than {rule.n} off days")
+
+    def _preferred_transition(self, rule: Rule) -> None:
+        for t in sorted(rule.teams):
+            origins = self._hosts(rule.from_loc, t)
+            if rule.role == "home":
+                origins &= {t}
+            elif rule.role == "away":
+                origins -= {t}
+            dests = self._hosts(rule.to_loc, t)
+            for j in range(1, len(self.dates)):
+                for b in self.teams:
+                    froms = [a for a in origins if a != b]
+                    if b in dests or not froms:
+                        continue
+                    left = sum(self._last_at(t, a, j - 1) for a in froms) + self._at(t, b, j)
+                    if rule.hard:
+                        self.m.add(left <= 1)
+                    else:
+                        wrong = self.m.new_bool_var(f"pref_{rule.id}_{t}_{b}_{j}")
+                        self.m.add(left <= 1 + wrong)
+                        self._soft_terms.append((rule, f"{t}: went to {b} on {self.dates[j]}", wrong))
+
+    def _home_away_run(self, rule: Rule) -> None:
+        home = rule.role == "home"
+        for t in sorted(rule.teams):
+            mine = [(self.home if home else self.away)[t, i] for i in self.days]
+            other = [(self.away if home else self.home)[t, i] for i in self.days]
+            if rule.option == "games":
+                length = self._counter(f"run_{rule.id}_{t}", mine, [other], t)
+                limit = rule.max
+            else:
+                # Days since the first game of the current run (counts off days too).
+                length = []
+                for i in self.days:
+                    v = self.m.new_int_var(0, len(self.dates), f"span_{rule.id}_{t}_{i}")
+                    if i == 0:
+                        self.m.add(v == 0)
+                    else:
+                        prev = length[-1]
+                        # cont: t's previous game was of the same kind, so day i extends the run.
+                        prev_home = self._last_at(t, t, i - 1)
+                        cont = self.m.new_bool_var(f"cont_{rule.id}_{t}_{i}")
+                        self.m.add(cont == (prev_home if home else self._played_before(t, i - 1) - prev_home))
+                        self.m.add(v == prev + 1).only_enforce_if([mine[i], cont])
+                        self.m.add(v == 0).only_enforce_if([mine[i], ~cont])
+                        self.m.add(v == 0).only_enforce_if(other[i])
+                        self.m.add(v == prev + 1).only_enforce_if(~self.plays[t, i])
+                    length.append(v)
+                limit = rule.max - 1  # span is inclusive: first and last game days both count
+            what = "homestand" if home else "road trip"
+            for i in self.days:
+                self._enforce(rule, lambda i=i: self.m.add(length[i] <= limit), [mine[i]],
+                              f"{t}: {what} too long on {self.dates[i]}")
+
+    def _max_consecutive_game_days(self, rule: Rule) -> None:
+        span = rule.max + 1
+        for t in sorted(rule.teams):
+            for i in range(len(self.dates) - span + 1):
+                window = sum(self.plays[t, k] for k in range(i, i + span))
+                self._bound(rule, window, span, f"{t}: {span} straight game days from {self.dates[i]}",
+                            hi=rule.max)
+
+    def _games_in_window(self, rule: Rule) -> None:
+        counted = set(self._rule_days(rule))
+        if rule.option == "week":
+            weeks: dict[tuple[int, int], list[int]] = {}
+            for i, d in enumerate(self.dates):
+                weeks.setdefault(tuple(d.isocalendar())[:2], []).append(i)
+            windows = list(weeks.values())
+        else:
+            windows = [list(range(i, i + rule.n)) for i in range(len(self.dates) - rule.n + 1)]
+        for t in sorted(rule.teams):
+            for window in windows:
+                games = sum(self._indicator(rule, t, i) for i in window if i in counted)
+                full = len(window) == (7 if rule.option == "week" else rule.n)
+                label = f"{t}: games {self.dates[window[0]]} to {self.dates[window[-1]]}"
+                self._bound(rule, games, len(window), label, rule.min if full else None, rule.max)
 
     # --- solving ----------------------------------------------------------------------
 
