@@ -19,7 +19,7 @@ def _tokens(text: str) -> list[str]:
     return [t.strip() for t in re.split(r"[,;\n]", text) if t.strip()]
 
 
-# --- Codes (teams, venues) ---------------------------------------------------
+# --- Team codes ---------------------------------------------------
 
 
 def parse_codes(value: object, known: set[str], what: str) -> frozenset[str]:
@@ -52,19 +52,20 @@ def _known_codes(text: str, known: set[str], what: str) -> frozenset[str]:
 LOCATION_KEYWORDS = {"any", "home", "away"}
 
 
-def parse_location(value: object, venues: set[str]) -> Location:
+def parse_location(value: object, teams: set[str]) -> Location:
+    """Parse a From/To cell: hosting team codes and/or any / home / away."""
     text = _cell_text(value)
     if not text:
-        raise SelectorError("location is required (venue code, or any / home / away)")
-    found_venues, keywords = set(), set()
+        raise SelectorError("location is required (hosting team code, or any / home / away)")
+    hosts, keywords = set(), set()
     for tok in _tokens(text):
         if tok.lower() in LOCATION_KEYWORDS:
             keywords.add(tok.lower())
-        elif tok.upper() in venues:
-            found_venues.add(tok.upper())
+        elif tok.upper() in teams:
+            hosts.add(tok.upper())
         else:
-            raise SelectorError(f"unknown venue code '{tok}' (or use any / home / away)")
-    return Location(frozenset(found_venues), frozenset(keywords))
+            raise SelectorError(f"unknown team code '{tok}' (or use any / home / away)")
+    return Location(frozenset(hosts), frozenset(keywords))
 
 
 # --- Days of week -------------------------------------------------------------

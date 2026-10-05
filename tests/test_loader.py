@@ -11,13 +11,12 @@ from wildflyer.template import build_workbook
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "ausl_2027.xlsx"
 
 SETTINGS = {"Season start": date(2027, 6, 12), "Season end": date(2027, 8, 15)}
-TEAMS = [("AAA", "Team A", "AV", "FF0000"), ("BBB", "Team B", "BV", "00FF00"), ("CCC", "Team C", "CV", "")]
-VENUES = [("AV", "Venue A", "AAA"), ("BV", "Venue B", "BBB"), ("CV", "Venue C", "CCC"), ("NEU", "Neutral", None)]
+TEAMS = [("AAA", "Team A", "FF0000"), ("BBB", "Team B", "00FF00"), ("CCC", "Team C", "")]
 
 
-def write(tmp_path, rules=(), settings=SETTINGS, teams=TEAMS, venues=VENUES, locks=()):
+def write(tmp_path, rules=(), settings=SETTINGS, teams=TEAMS, locks=()):
     path = tmp_path / "in.xlsx"
-    build_workbook(settings=settings, teams=teams, venues=venues, rules=rules, locks=locks).save(path)
+    build_workbook(settings=settings, teams=teams, rules=rules, locks=locks).save(path)
     return load(path)
 
 
@@ -39,7 +38,7 @@ def test_example_workbook_is_valid():
     result = load(EXAMPLE)
     assert result.ok, messages(result)
     assert len(result.run.teams) == 6
-    assert len(result.run.rules) == 31  # R90 is disabled
+    assert len(result.run.rules) == 29  # R90 is disabled
 
 
 def test_minimal_valid(tmp_path):
@@ -69,23 +68,19 @@ class TestSettings:
         assert result.run.settings.time_limit_seconds == 60 and result.run.settings.run_name == "v1"
 
 
-class TestTeamsVenues:
-    def test_unknown_home_venue(self, tmp_path):
-        teams = TEAMS + [("DDD", "Team D", "NOPE", "")]
-        e = assert_error(write(tmp_path, teams=teams), "not on the Venues sheet")
-        assert e.row == 5 and e.field == "Home venue"
-
+class TestTeams:
     def test_duplicate_team(self, tmp_path):
-        assert_error(write(tmp_path, teams=TEAMS + [("AAA", "dup", "AV", "")]), "duplicate team code")
+        e = assert_error(write(tmp_path, teams=TEAMS + [("AAA", "dup", "")]), "duplicate team code")
+        assert e.row == 5 and e.field == "Code"
 
     def test_bad_color(self, tmp_path):
-        assert_error(write(tmp_path, teams=[("AAA", "A", "AV", "red")] + TEAMS[1:]), "hex code")
-
-    def test_venue_owner_unknown(self, tmp_path):
-        assert_error(write(tmp_path, venues=VENUES + [("XV", "X", "ZZZ")]), "venue owner 'ZZZ'")
+        assert_error(write(tmp_path, teams=[("AAA", "A", "red")] + TEAMS[1:]), "hex code")
 
     def test_reserved_code(self, tmp_path):
-        assert_error(write(tmp_path, teams=TEAMS + [("ALL", "x", "NEU", "")]), "can't be ALL")
+        assert_error(write(tmp_path, teams=TEAMS + [("ALL", "x", "")]), "can't be ALL")
+
+    def test_too_few_teams(self, tmp_path):
+        assert_error(write(tmp_path, teams=TEAMS[:1]), "at least two teams")
 
 
 class TestRules:
@@ -161,10 +156,10 @@ class TestRules:
         assert [r.id for r in result.run.rules] == ["R1"]
 
     def test_fixed_game(self, tmp_path):
-        result = write(tmp_path, [rule(Type="FIXED_GAME", Teams="AAA", Opponents="BBB", Dates="7/4", Venues="NEU")])
+        result = write(tmp_path, [rule(Type="FIXED_GAME", Teams="AAA", Opponents="BBB", Dates="7/4")])
         assert result.ok, messages(result)
         r = result.run.rules[0]
-        assert r.teams == {"AAA"} and r.opponents == {"BBB"} and r.venues == {"NEU"}
+        assert r.teams == {"AAA"} and r.opponents == {"BBB"} and r.dates == {date(2027, 7, 4)}
 
     def test_fixed_game_single_team(self, tmp_path):
         assert_error(write(tmp_path, [rule(Type="FIXED_GAME", Teams="AAA,BBB", Opponents="CCC", Dates="7/4")]),
@@ -175,10 +170,10 @@ class TestRules:
                      "can't play itself")
 
     def test_travel_rest_locations(self, tmp_path):
-        result = write(tmp_path, [rule(Type="TRAVEL_REST", From="AV", To="away", N=2)])
+        result = write(tmp_path, [rule(Type="TRAVEL_REST", From="AAA", To="away", N=2)])
         assert result.ok, messages(result)
         r = result.run.rules[0]
-        assert r.from_loc.venues == {"AV"} and r.to_loc.keywords == {"away"}
+        assert r.from_loc.hosts == {"AAA"} and r.to_loc.keywords == {"away"}
 
     def test_rolling_window_needs_n(self, tmp_path):
         assert_error(write(tmp_path, [rule(Type="GAMES_IN_WINDOW", Max=4)]), "rolling windows need N")
@@ -195,12 +190,12 @@ class TestRules:
 
 class TestLocks:
     def test_valid_lock(self, tmp_path):
-        result = write(tmp_path, locks=[(date(2027, 7, 1), "AAA", "BBB", None)])
+        result = write(tmp_path, locks=[(date(2027, 7, 1), "AAA", "BBB")])
         assert result.ok and result.run.locks[0].home == "AAA"
 
     def test_bad_lock(self, tmp_path):
-        result = write(tmp_path, locks=[(date(2027, 1, 1), "AAA", "AAA", "ZZ")])
-        for text in ("outside the season", "can't play itself", "unknown venue"):
+        result = write(tmp_path, locks=[(date(2027, 1, 1), "AAA", "AAA"), (date(2027, 7, 1), "AAA", "ZZZ")])
+        for text in ("outside the season", "can't play itself", "unknown team 'ZZZ'"):
             assert_error(result, text)
 
 
@@ -218,7 +213,7 @@ def test_help_sheet_lists_every_rule_type():
 
 
 def test_missing_sheet(tmp_path):
-    wb = build_workbook(settings=SETTINGS, teams=TEAMS, venues=VENUES)
+    wb = build_workbook(settings=SETTINGS, teams=TEAMS)
     del wb["Rules"]
     path = tmp_path / "x.xlsx"
     wb.save(path)
@@ -229,3 +224,19 @@ def test_unreadable_file(tmp_path):
     path = tmp_path / "x.xlsx"
     path.write_text("not a workbook")
     assert_error(load(path), "can't open workbook")
+
+
+def test_dates_column_is_text_formatted():
+    ws = build_workbook()["Rules"]
+    col = [c.value for c in ws[1]].index("Dates") + 1
+    assert ws.cell(2, col).number_format == "@"
+
+
+def test_old_venue_columns_are_reported(tmp_path):
+    wb = build_workbook(settings=SETTINGS, teams=TEAMS, rules=[rule(Type="TEAM_GAMES", Max=3)])
+    wb["Rules"].cell(1, 30, "Venues")
+    path = tmp_path / "x.xlsx"
+    wb.save(path)
+    result = load(path)
+    assert result.ok
+    assert any("unknown column" in m and "Venues" in m for m in messages(result, Level.WARNING))

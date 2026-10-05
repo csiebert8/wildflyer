@@ -30,8 +30,7 @@ wildflyer validate my_season.xlsx
 | Sheet | Contents |
 |---|---|
 | Settings | Season start/end, time limit, optional base run |
-| Teams | Code, name, home venue, grid color |
-| Venues | Code, name, owning team (blank = neutral site) |
+| Teams | Code, name, grid color |
 | Rules | One rule per row: type, filters, parameters, Hard/Soft, Weight |
 | Locks | Optional: games pinned to a date |
 | Help | Syntax reference and the full rule catalog (generated) |

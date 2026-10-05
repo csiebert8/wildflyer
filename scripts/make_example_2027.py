@@ -20,23 +20,12 @@ SETTINGS = {
 }
 
 TEAMS = [
-    ("CHI", "Chicago Bandits", "CHI", "76D6FF"),
-    ("CAR", "Carolina Blaze", "CAR", "FF00FF"),
-    ("OKC", "Oklahoma City Spark", "OKC", "0000FF"),
-    ("UTA", "Utah Talons", "UTA", "274E13"),
-    ("TEX", "Texas Volts", "TEX", "9900FF"),
-    ("PDX", "Portland Cascade", "PDX", "B7E1CD"),
-]
-
-VENUES = [
-    ("CHI", "Rosemont, Ill. (Parkway Bank Sports Complex)", "CHI"),
-    ("CAR", "Durham, N.C. (Smith Family Stadium)", "CAR"),
-    ("OKC", "Edmond, Okla. (Tom Heath Field)", "OKC"),
-    ("UTA", "Salt Lake City, Utah (Dumke Family Stadium)", "UTA"),
-    ("TEX", "Round Rock, Texas", "TEX"),
-    ("PDX", "Portland, Ore.", "PDX"),
-    ("SAT", "San Antonio, Texas (neutral site)", None),
-    ("DBAP", "Durham Bulls Athletic Park (neutral site)", None),
+    ("CHI", "Chicago Bandits", "76D6FF"),
+    ("CAR", "Carolina Blaze", "FF00FF"),
+    ("OKC", "Oklahoma City Spark", "0000FF"),
+    ("UTA", "Utah Talons", "274E13"),
+    ("TEX", "Texas Volts", "9900FF"),
+    ("PDX", "Portland Cascade", "B7E1CD"),
 ]
 
 RR_HOME = "6/25-27, 7/1-3, 7/15-17, 7/29-31, 8/12-14"
@@ -59,17 +48,15 @@ RULES = [
     rule("R05", "REMATCH_GAP", N=14, Note="No series vs the same opponent within 2 weeks"),
     # Hard date restrictions
     rule("R10", "AVAILABILITY", Teams="TEX", Role="home", Option="must", Dates=RR_HOME,
-         Note="Round Rock home dates"),
+         Note="Round Rock home dates (8/12-14 are played in San Antonio)"),
     rule("R11", "AVAILABILITY", Teams="TEX", Role="home", Option="only", Dates=RR_HOME,
          Note="...and no other home dates"),
-    rule("R12", "VENUE_OVERRIDE", Teams="TEX", Venues="SAT", Dates="8/12-8/14", Note="8/12-14 in San Antonio"),
     rule("R13", "AVAILABILITY", Teams="CAR", Role="home", Option="must", Dates="8/12-8/14",
-         Note="Durham home 8/12-14"),
-    rule("R14", "VENUE_OVERRIDE", Teams="CAR", Venues="DBAP", Dates="8/12-8/14", Note="...at DBAP"),
-    rule("R15", "AVAILABILITY", Teams="CAR", Role="home", Venues="CAR", Option="cannot",
-         Dates="6/11-13, 6/21-22, 7/12-14, 7/23-25, 8/2-end",
-         Note="Duke blackout dates (home stadium only; DBAP games unaffected)"),
-    rule("R16", "AVAILABILITY", "Soft", Teams="CAR", Role="home", Venues="CAR", Option="cannot",
+         Note="Durham home 8/12-14 (at DBAP)"),
+    rule("R15", "AVAILABILITY", Teams="CAR", Role="home", Option="cannot",
+         Dates="6/12-13, 6/21-22, 7/12-14, 7/23-25, 8/2-11, 8/15",
+         Note="Duke blackout dates (8/12-14 excluded: those home games are at DBAP)"),
+    rule("R16", "AVAILABILITY", "Soft", Teams="CAR", Role="home", Option="cannot",
          Dates="6/23, 7/15", Weight=50, Note="Duke flex dates: avoid unless needed"),
     rule("R17", "AVAILABILITY", Teams="UTA", Role="home", Option="cannot", Dates="8/1-end",
          Note="No Utah home games in August"),
@@ -87,8 +74,8 @@ RULES = [
     rule("R32", "TRAVEL_REST", From="CAR", To="PDX, UTA", N=2,
          Note="Example long-distance moves: 2 off days, hard (edit pairs as needed)"),
     rule("R33", "TRAVEL_REST", From="PDX, UTA", To="CAR", N=2, Note="Example long-distance moves (reverse)"),
-    rule("R34", "TRAVEL_REST", From="TEX, SAT", To="PDX", N=2, Note="Example long-distance moves"),
-    rule("R35", "TRAVEL_REST", From="PDX", To="TEX, SAT", N=2, Note="Example long-distance moves (reverse)"),
+    rule("R34", "TRAVEL_REST", From="TEX", To="PDX", N=2, Note="Example long-distance moves"),
+    rule("R35", "TRAVEL_REST", From="PDX", To="TEX", N=2, Note="Example long-distance moves (reverse)"),
     rule("R36", "MAX_CONSECUTIVE_GAME_DAYS", Max=4,
          Note="No more than 4 consecutive games (read as consecutive game days)"),
     rule("R37", "PREFERRED_TRANSITION", "Soft", Role="away", From="PDX", To="UTA", Weight=5,
@@ -116,7 +103,7 @@ RULES = [
 
 def main() -> None:
     out = Path(__file__).resolve().parent.parent / "examples" / "ausl_2027.xlsx"
-    write_template(out, settings=SETTINGS, teams=TEAMS, venues=VENUES, rules=RULES)
+    write_template(out, settings=SETTINGS, teams=TEAMS, rules=RULES)
     print(f"Wrote {out}")
 
 

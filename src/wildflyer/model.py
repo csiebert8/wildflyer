@@ -38,15 +38,7 @@ class Issue:
 class Team:
     code: str
     name: str
-    home_venue: str
     color: str  # 6-digit hex, no '#'
-
-
-@dataclass(frozen=True)
-class Venue:
-    code: str
-    name: str
-    team: str | None  # owning team; None = neutral site
 
 
 @dataclass(frozen=True)
@@ -63,12 +55,13 @@ class Settings:
 class Location:
     """A From/To location selector for transition rules.
 
-    `venues` holds explicit venue codes; the keywords expand per team at solve
-    time: `home` = the team's own home venue, `away` = any venue other than the
-    team's home venue, `any` = every venue.
+    Every game is played at the home team's location, so a location is named by
+    the hosting team's code. `hosts` holds explicit team codes; the keywords
+    expand per team at solve time: `home` = the team's own home games, `away` =
+    games hosted by anyone else, `any` = every game.
     """
 
-    venues: frozenset[str] = frozenset()
+    hosts: frozenset[str] = frozenset()
     keywords: frozenset[str] = frozenset()  # subset of {"any", "home", "away"}
 
 
@@ -82,7 +75,6 @@ class Rule:
     teams: frozenset[str] = frozenset()
     opponents: frozenset[str] = frozenset()
     role: str = "any"  # home | away | any
-    venues: frozenset[str] = frozenset()
     from_loc: Location | None = None
     to_loc: Location | None = None
     dates: frozenset[date] = frozenset()  # empty = whole season
@@ -104,14 +96,12 @@ class Lock:
     date: date
     home: str
     away: str
-    venue: str | None = None
 
 
 @dataclass
 class RunInput:
     settings: Settings
     teams: dict[str, Team]
-    venues: dict[str, Venue]
     rules: list[Rule]
     locks: list[Lock] = field(default_factory=list)
 

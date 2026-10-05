@@ -14,14 +14,14 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from .catalog import CATALOG, ROLES
 from .loader import (LOCK_COLUMNS, RULE_COLUMNS, SETTINGS_KEYS, SHEET_LOCKS, SHEET_RULES, SHEET_SETTINGS,
-                     SHEET_TEAMS, SHEET_VENUES, TEAM_COLUMNS, VENUE_COLUMNS)
+                     SHEET_TEAMS, TEAM_COLUMNS)
 
 HEADER_FILL = PatternFill("solid", fgColor="1F3864")
 HEADER_FONT = Font(bold=True, color="FFFFFF")
 SECTION_FONT = Font(bold=True, size=12)
 WRAP = Alignment(wrap_text=True, vertical="top")
 
-RULE_WIDTHS = {"ID": 8, "Enabled": 9, "Type": 26, "Teams": 16, "Opponents": 14, "Role": 8, "Venues": 10,
+RULE_WIDTHS = {"ID": 8, "Enabled": 9, "Type": 26, "Teams": 16, "Opponents": 14, "Role": 8,
                "From": 10, "To": 10, "Dates": 30, "Days": 12, "Min": 6, "Max": 6, "N": 6, "Option": 10,
                "Hard/Soft": 10, "Weight": 8, "Note": 50}
 SETTINGS_HELP = {
@@ -37,7 +37,6 @@ SETTINGS_HELP = {
 def build_workbook(
     settings: dict[str, Any] | None = None,
     teams: Iterable[Sequence[Any]] = (),
-    venues: Iterable[Sequence[Any]] = (),
     rules: Iterable[dict[str, Any]] = (),
     locks: Iterable[Sequence[Any]] = (),
 ) -> Workbook:
@@ -46,14 +45,12 @@ def build_workbook(
     ws = wb.active
     ws.title = SHEET_SETTINGS
     _settings_sheet(ws, settings or {})
-    _table_sheet(wb.create_sheet(SHEET_TEAMS), TEAM_COLUMNS, teams, {"Code": 8, "Name": 28, "Home venue": 12,
-                                                                     "Color": 10})
+    _table_sheet(wb.create_sheet(SHEET_TEAMS), TEAM_COLUMNS, teams, {"Code": 8, "Name": 28, "Color": 10})
     _color_team_rows(wb[SHEET_TEAMS])
-    _table_sheet(wb.create_sheet(SHEET_VENUES), VENUE_COLUMNS, venues, {"Code": 8, "Name": 40, "Team": 8})
     rules_ws = wb.create_sheet(SHEET_RULES)
     _table_sheet(rules_ws, RULE_COLUMNS, ([r.get(c) for c in RULE_COLUMNS] for r in rules), RULE_WIDTHS)
-    _table_sheet(wb.create_sheet(SHEET_LOCKS), LOCK_COLUMNS, locks, {"Date": 12, "Home": 8, "Away": 8,
-                                                                     "Venue": 8})
+    _text_column(rules_ws, RULE_COLUMNS.index("Dates") + 1)
+    _table_sheet(wb.create_sheet(SHEET_LOCKS), LOCK_COLUMNS, locks, {"Date": 12, "Home": 8, "Away": 8})
     _help_sheet(wb.create_sheet("Help"))
     _rule_validations(wb, rules_ws)
     return wb
@@ -89,8 +86,15 @@ def _table_sheet(ws: Worksheet, columns: Sequence[str], rows: Iterable[Sequence[
                 cell.number_format = "yyyy-mm-dd"
 
 
+def _text_column(ws: Worksheet, col: int, last_row: int = 1000) -> None:
+    """Format a column as Text so Excel doesn't turn entries like 6/25 into dates."""
+    for r in range(2, last_row + 1):
+        ws.cell(r, col).number_format = "@"
+
+
 def _color_team_rows(ws: Worksheet) -> None:
-    for row in ws.iter_rows(min_row=2, min_col=4, max_col=4):
+    col = TEAM_COLUMNS.index("Color") + 1
+    for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
         cell = row[0]
         if isinstance(cell.value, str) and len(cell.value.lstrip("#")) == 6:
             cell.fill = PatternFill("solid", fgColor=cell.value.lstrip("#").upper())
@@ -117,7 +121,7 @@ def _help_sheet(ws: Worksheet) -> None:
 
     ws.append(["Wildflyer input workbook"])
     ws.cell(1, 1).font = Font(bold=True, size=14)
-    ws.append(["Fill in Settings, Teams, Venues and Rules (Locks is optional), then run "
+    ws.append(["Fill in Settings, Teams and Rules (Locks is optional), then run "
                "`wildflyer validate <file>` to check it."])
 
     section("Writing rules")
@@ -127,8 +131,9 @@ def _help_sheet(ws: Worksheet) -> None:
         ("Hard/Soft", "Hard = must hold. Soft = may be broken at a cost of Weight per violation."),
         ("Weight", "Soft rules only: cost per violation unit (see the table below). Higher = more important."),
         ("Teams / Opponents", "Team codes: CHI  or  CHI, UTA  or  ALL  or  ALL except CHI, UTA"),
-        ("Venues / From / To", "Venue codes. From/To also accept: any, home (the team's own home venue), "
-                               "away (any venue other than its home)."),
+        ("From / To", "Locations, named by the hosting team's code (every game is at the home team's "
+                      "location). Also: any, home (the team's own home games), away (games hosted by "
+                      "anyone else)."),
         ("Role", "home, away or any (blank = any)."),
         ("Dates", "6/25  ·  6/25-6/27  ·  6/25-27  ·  2027-06-25  ·  8/2-end  ·  start-6/20  ·  "
                   "lists: 6/25-27, 7/1-3. Blank = whole season."),
@@ -143,7 +148,7 @@ def _help_sheet(ws: Worksheet) -> None:
         ("Off day", "A date on which the team has no game."),
         ("Block", "A run of a team's games against one opponent with no game against anyone else in "
                   "between. Off days do not break a block."),
-        ("Move", "Two consecutive games of a team at different venues."),
+        ("Move", "Two consecutive games of a team at different locations (different host teams)."),
         ("Homestand / road trip", "A run of consecutive home (or away) games of a team."),
     ):
         ws.append(list(line))

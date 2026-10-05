@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # Fields a rule row may fill. Keys match the Rules tab column headers (lowercased).
-FIELDS = ("teams", "opponents", "role", "venues", "from", "to", "dates", "days",
+FIELDS = ("teams", "opponents", "role", "from", "to", "dates", "days",
           "min", "max", "n", "option")
 
 ROLES = ("home", "away", "any")
@@ -35,7 +35,6 @@ class RuleSpec:
     needs_min_or_max: bool = False
     single_team: bool = False  # Teams must name exactly one team
     single_opponent: bool = False
-    single_venue: bool = False
     teams_default_all: bool = True  # blank Teams means ALL
     violation_unit: str = "occurrence"
 
@@ -90,34 +89,24 @@ _SPECS = [
         "Days = Wed, Max = 1",
         needs_min_or_max=True, teams_default_all=False, violation_unit="game short/over, per date",
     ),
-    # --- Availability & venues ---------------------------------------------------
+    # --- Availability ------------------------------------------------------------
     RuleSpec(
-        "AVAILABILITY", "Availability & venues",
+        "AVAILABILITY", "Availability",
         "Where/when a team may play. must = the team plays (in Role) on every listed date; "
         "cannot = the team does not play (in Role) on listed dates; "
-        "only = the team plays (in Role) only on listed dates. "
-        "Venues narrows the rule to games at those venues (e.g. a home-stadium blackout "
-        "that doesn't apply to games moved to a neutral site).",
-        {"teams": TEAMS, "opponents": OPPONENTS, "role": ROLE, "venues": _f(False, "Only games at these venues"),
+        "only = the team plays (in Role) only on listed dates.",
+        {"teams": TEAMS, "opponents": OPPONENTS, "role": ROLE,
          "dates": _f(True, "Dates the rule refers to"), "days": DAYS_OPT},
         "Teams = UTA, Role = home, Option = cannot, Dates = 8/1-end",
         options=("must", "cannot", "only"), violation_unit="date",
     ),
     RuleSpec(
-        "VENUE_OVERRIDE", "Availability & venues",
-        "The team's home games on the listed dates are played at the given venue instead of "
-        "its home venue. Does not by itself require a home game; combine with AVAILABILITY.",
-        {"teams": TEAMS, "venues": _f(True, "The venue to play at"), "dates": _f(True, "Dates of the override")},
-        "Teams = TEX, Venues = SAT, Dates = 8/12-8/14",
-        single_venue=True, teams_default_all=False, violation_unit="game",
-    ),
-    RuleSpec(
-        "FIXED_GAME", "Availability & venues",
+        "FIXED_GAME", "Availability",
         "A specific game on each listed date: Teams = home team, Opponents = away team.",
         {"teams": _f(True, "Home team"), "opponents": _f(True, "Away team"),
-         "venues": _f(False, "Venue (blank = home team's venue)"), "dates": _f(True, "Date(s) of the game")},
+         "dates": _f(True, "Date(s) of the game")},
         "Teams = CHI, Opponents = UTA, Dates = 7/4",
-        single_team=True, single_opponent=True, single_venue=True, teams_default_all=False,
+        single_team=True, single_opponent=True, teams_default_all=False,
         violation_unit="game",
     ),
     # --- Sequence: opponents --------------------------------------------------------
@@ -150,18 +139,19 @@ _SPECS = [
     # --- Sequence: locations & workload ------------------------------------------------
     RuleSpec(
         "TRAVEL_REST", "Sequence: locations & workload",
-        "Minimum off days when a team's next game is at a different venue, for moves from a "
-        "From venue to a To venue. From/To accept venue codes or any / home / away "
-        "(home = the team's own home venue).",
-        {"teams": TEAMS, "from": _f(True, "Venue(s) moved from"), "to": _f(True, "Venue(s) moved to"),
+        "Minimum off days when a team moves between locations, for moves from a From location "
+        "to a To location. Every game is at the home team's location, so locations are hosting "
+        "team codes, or any / home / away (home = the team's own home games).",
+        {"teams": TEAMS, "from": _f(True, "Location(s) moved from"), "to": _f(True, "Location(s) moved to"),
          "dates": DATES_OPT, "n": _f(True, "Minimum off days between the two games")},
         "From = TEX, To = CAR, N = 2", violation_unit="move",
     ),
     RuleSpec(
         "PREFERRED_TRANSITION", "Sequence: locations & workload",
-        "When a team leaves a From venue for a different venue, its next venue should be a "
-        "To venue.",
-        {"teams": TEAMS, "role": ROLE, "from": _f(True, "Venue(s) left"), "to": _f(True, "Venue(s) to go to next")},
+        "When a team leaves a From location for a different location, its next location should "
+        "be a To location.",
+        {"teams": TEAMS, "role": ROLE, "from": _f(True, "Location(s) left"),
+         "to": _f(True, "Location(s) to go to next")},
         "Role = away, From = PDX, To = UTA", violation_unit="move",
     ),
     RuleSpec(

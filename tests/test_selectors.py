@@ -32,12 +32,12 @@ class TestCodes:
 
 
 class TestLocation:
-    def test_keywords_and_venues(self):
-        loc = parse_location("home, PDX", {"PDX", "CHI"})
-        assert loc.keywords == {"home"} and loc.venues == {"PDX"}
+    def test_keywords_and_hosts(self):
+        loc = parse_location("home, pdx", {"PDX", "CHI"})
+        assert loc.keywords == {"home"} and loc.hosts == {"PDX"}
 
     def test_unknown(self):
-        with pytest.raises(SelectorError, match="unknown venue"):
+        with pytest.raises(SelectorError, match="unknown team"):
             parse_location("nowhere", {"PDX"})
 
     def test_required(self):

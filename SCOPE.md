@@ -27,8 +27,11 @@ entered per run.
    hold; otherwise no schedule) or *soft* (each violation costs
    `weight × units`). The solver minimizes the total soft cost. No priority
    tiers.
-4. **No distances.** Travel is expressed only through explicit transition rules
-   ("require 2 days off when moving from TEX home venue to CAR home venue").
+4. **No distances, no venues.** Every game is played at the home team's
+   location, so a location is named by the hosting team. Travel is expressed
+   only through explicit transition rules ("require 2 days off when moving from
+   a TEX home game to a CAR home game"). Neutral-site games are entered as
+   locks (home team + away team on a date).
 5. **Explainable.** Every rule is checked and reported on the output; when hard
    rules conflict, the tool names the conflicting rule rows.
 
@@ -36,8 +39,7 @@ entered per run.
 
 | Tab | Contents | Reused across runs? |
 |---|---|---|
-| **Teams** | Code, name, home venue, grid color | Yes (league profile) |
-| **Venues** | Code, name, owning team (blank = neutral) | Yes (league profile) |
+| **Teams** | Code, name, grid color | Yes (league profile) |
 | **Settings** | Season start/end dates, solver time limit, base run for re-solving (optional) | Per run |
 | **Rules** | One row per rule (see below) | Per run |
 | **Locks** *(optional)* | Games pinned from a previous run | Per run |
@@ -52,7 +54,7 @@ entered per run.
 | Teams | Team(s) the rule applies to: `CHI`, `CHI,UTA`, `ALL`, `ALL except CHI` |
 | Opponents | Optional opponent filter (same syntax) |
 | Role | `home`, `away` or `any` |
-| Venues | Optional venue filter; for transition rules, `From` / `To` venues |
+| From / To | Transition rules only: hosting team codes, or `any` / `home` / `away` |
 | Dates | Single dates, ranges, lists: `6/25-6/27, 7/1-7/3`; blank = whole season |
 | Days of week | Optional filter: `Mon-Thu`, `Fri,Sat,Sun` |
 | Min / Max / N | Numeric parameters, meaning depends on rule type |
@@ -67,12 +69,12 @@ and reports errors by row ID before solving.
 
 - **Solver:** Google OR-Tools CP-SAT (Python).
 - **Core decision:** for each ordered team pair *(home, away)* and each date,
-  whether that game is played (and at which venue, if overrides apply).
+  whether that game is played.
 - **Built-in invariants** (not rules): a team plays at most one game per date;
-  a venue hosts at most one game per date; every game has a home and an away
-  team.
+  every game has a home and an away team.
 - **Derived state** available to rules: whether a team plays on a date, its
-  venue on each game date, its opponent on each game date, home/away status.
+  location (host team) on each game date, its opponent on each game date,
+  home/away status.
 - Each **hard** rule row compiles to constraints guarded by an on/off flag, so
   that when the model is infeasible the solver can report a minimal set of
   conflicting rule IDs.
@@ -83,8 +85,8 @@ and reports errors by row ID before solving.
 
 ## 5. Rule catalog
 
-Each type supports the common filters (Teams, Opponents, Role, Venues, Dates,
-Days of week) where meaningful, and can be hard or soft.
+Each type supports the common filters (Teams, Opponents, Role, Dates, Days of
+week) where meaningful, and can be hard or soft.
 
 ### Season & volume
 | Type | Parameters | Example use |
@@ -95,12 +97,11 @@ Days of week) where meaningful, and can be hard or soft.
 | `TEAM_GAMES` | Teams, Role, Dates, Min/Max | 30 games per team; ≤ 15 home games |
 | `GAMES_PER_DAY` | Dates, Days of week, Min/Max | ≤ 1 game on Wednesdays; ≤ 2 Mon-Thu |
 
-### Availability & venues
+### Availability
 | Type | Parameters | Example use |
 |---|---|---|
 | `AVAILABILITY` | Teams, Role, Dates, Mode = `must` / `cannot` / `only` | Team must be home on given dates; cannot host in August; may host only within given windows |
-| `VENUE_OVERRIDE` | Teams, Dates, Venue | Team's home games on given dates are at a neutral venue |
-| `FIXED_GAME` | Date, home, away, (venue) | Pin a specific game |
+| `FIXED_GAME` | Date, home, away | Pin a specific game |
 
 ### Sequence: opponents
 | Type | Parameters | Example use |
@@ -112,8 +113,8 @@ Days of week) where meaningful, and can be hard or soft.
 ### Sequence: locations & workload
 | Type | Parameters | Example use |
 |---|---|---|
-| `TRAVEL_REST` | From venue(s), To venue(s) (wildcards: `any`, `home`, `away`), N = min off days | 2 days off when moving from TEX home to CAR home; 1 day off on any venue change |
-| `PREFERRED_TRANSITION` | From venue(s), To venue(s) | Visitors go PDX → UTA back-to-back (soft) |
+| `TRAVEL_REST` | From location(s), To location(s) (host team codes or `any`, `home`, `away`), N = min off days | 2 days off when moving from TEX home to CAR home; 1 day off on any location change |
+| `PREFERRED_TRANSITION` | From location(s), To location(s) | Visitors go PDX → UTA back-to-back (soft) |
 | `HOME_AWAY_RUN` | Role, Max consecutive games or Max days | No road trip or homestand longer than 14 days |
 | `MAX_CONSECUTIVE_GAME_DAYS` | Max | No more than 4 game days in a row |
 | `GAMES_IN_WINDOW` | N-day rolling window or calendar week, Min/Max | ≤ 4 games in any 7 days |
@@ -129,8 +130,8 @@ Days of week) where meaningful, and can be hard or soft.
 1. **Grid** — teams in rows, every season date as a column (month bands,
    weekday labels, weekends shaded, league blackouts marked). Cell = opponent:
    home games `UTA` filled with the home team's color; away games `@UTA` on
-   white; neutral-venue games flagged; off days blank. Game counts per team.
-2. **List** — Date, Day, Away, Home, Venue (sorted by date).
+   white; off days blank. Game counts per team.
+2. **List** — Date, Day, Away, Home (sorted by date).
 3. **Checks** — matchup matrix (home/away games per pair), home/away totals per
    team, games per day by weekday, transitions per team with off days between.
 4. **Rules report** — every rule row: met / violated, where (dates, teams),
@@ -151,7 +152,8 @@ Days of week) where meaningful, and can be hard or soft.
 
 ## 8. Out of scope (MVP)
 
-Web UI (phase 2), natural-language rule entry (phase 2), game times,
+Web UI (phase 2), natural-language rule entry (phase 2), venues / neutral
+sites (use locks), game times,
 doubleheaders, TV windows, postseason, divisions, officials, calendar exports,
 multi-user access.
 
@@ -170,8 +172,8 @@ multi-user access.
 ## 10. Milestones
 
 1. **M1 — Inputs:** template, loader, validation with row-level errors.
-2. **M2 — Core engine:** game variables, invariants, season/volume,
-   availability and venue rules; grid + list output.
+2. **M2 — Core engine:** game variables, invariants, season/volume and
+   availability rules, locks; grid + list output.
 3. **M3 — Sequence rules:** opponent blocks, rematch gap, transitions,
    home/away runs, workload windows.
 4. **M4 — Soft rules & reporting:** weighted objective, preferences, balance,

@@ -11,19 +11,17 @@ import openpyxl
 
 from . import selectors as sel
 from .catalog import CATALOG, FIELDS, RuleSpec
-from .model import Issue, Level, Lock, Rule, RunInput, Settings, Team, Venue
+from .model import Issue, Level, Lock, Rule, RunInput, Settings, Team
 
 SHEET_SETTINGS = "Settings"
 SHEET_TEAMS = "Teams"
-SHEET_VENUES = "Venues"
 SHEET_RULES = "Rules"
 SHEET_LOCKS = "Locks"
 
-TEAM_COLUMNS = ("Code", "Name", "Home venue", "Color")
-VENUE_COLUMNS = ("Code", "Name", "Team")
-RULE_COLUMNS = ("ID", "Enabled", "Type", "Teams", "Opponents", "Role", "Venues", "From", "To",
+TEAM_COLUMNS = ("Code", "Name", "Color")
+RULE_COLUMNS = ("ID", "Enabled", "Type", "Teams", "Opponents", "Role", "From", "To",
                 "Dates", "Days", "Min", "Max", "N", "Option", "Hard/Soft", "Weight", "Note")
-LOCK_COLUMNS = ("Date", "Home", "Away", "Venue")
+LOCK_COLUMNS = ("Date", "Home", "Away")
 SETTINGS_KEYS = {
     "runname": "Run name",
     "seasonstart": "Season start",
@@ -85,18 +83,17 @@ class _Loader:
 
     def run(self) -> LoadResult:
         settings = self._settings()
-        venues = self._venues()
-        teams = self._teams(venues)
+        teams = self._teams()
         rules: list[Rule] = []
         locks: list[Lock] = []
         if settings is None:
             self._issue(Level.ERROR, SHEET_RULES, "rules not checked until Settings season dates are fixed")
         else:
-            rules = self._rules(settings, teams, venues)
-            locks = self._locks(settings, teams, venues)
+            rules = self._rules(settings, teams)
+            locks = self._locks(settings, teams)
         if any(i.level is Level.ERROR for i in self.issues) or settings is None:
             return LoadResult(None, self.issues)
-        return LoadResult(RunInput(settings, teams, venues, rules, locks), self.issues)
+        return LoadResult(RunInput(settings, teams, rules, locks), self.issues)
 
     # --- sheet helpers ---------------------------------------------------------
 
@@ -180,32 +177,9 @@ class _Loader:
             self._issue(Level.WARNING, SHEET_SETTINGS, "season is longer than 400 days; check the dates")
         return Settings(start, end, run_name, time_limit or 300, base_run, change_weight or 0.0)
 
-    # --- Teams & venues -------------------------------------------------------------
+    # --- Teams ---------------------------------------------------------------------
 
-    def _venues(self) -> dict[str, Venue]:
-        venues: dict[str, Venue] = {}
-        self._venue_owner_rows: dict[str, tuple[int, str]] = {}
-        for r, rec in self._table(SHEET_VENUES, VENUE_COLUMNS):
-            code = _text(rec["Code"]).upper()
-            if not code:
-                self._issue(Level.ERROR, SHEET_VENUES, "Code is required", row=r, field="Code")
-                continue
-            if not re.fullmatch(r"[A-Z0-9_]+", code):
-                self._issue(Level.ERROR, SHEET_VENUES, f"code '{code}' may only use letters, digits and _",
-                            row=r, field="Code")
-                continue
-            if code in venues:
-                self._issue(Level.ERROR, SHEET_VENUES, f"duplicate venue code '{code}'", row=r, field="Code")
-                continue
-            owner = _text(rec["Team"]).upper() or None
-            if owner:
-                self._venue_owner_rows[code] = (r, owner)
-            venues[code] = Venue(code, _text(rec["Name"]) or code, owner)
-        if not venues and SHEET_VENUES in self.wb.sheetnames:
-            self._issue(Level.ERROR, SHEET_VENUES, "no venues defined")
-        return venues
-
-    def _teams(self, venues: dict[str, Venue]) -> dict[str, Team]:
+    def _teams(self) -> dict[str, Team]:
         teams: dict[str, Team] = {}
         for r, rec in self._table(SHEET_TEAMS, TEAM_COLUMNS):
             code = _text(rec["Code"]).upper()
@@ -219,43 +193,25 @@ class _Loader:
             if code in teams:
                 self._issue(Level.ERROR, SHEET_TEAMS, f"duplicate team code '{code}'", row=r, field="Code")
                 continue
-            home = _text(rec["Home venue"]).upper()
-            if not home:
-                self._issue(Level.ERROR, SHEET_TEAMS, "Home venue is required", row=r, field="Home venue")
-            elif venues and home not in venues:
-                self._issue(Level.ERROR, SHEET_TEAMS, f"home venue '{home}' is not on the Venues sheet",
-                            row=r, field="Home venue")
             color = _text(rec["Color"]).lstrip("#").upper()
             if not color:
                 color = "D9D9D9"
             elif not re.fullmatch(r"[0-9A-F]{6}", color):
                 self._issue(Level.ERROR, SHEET_TEAMS, f"color '{rec['Color']}' must be a hex code like 76D6FF",
                             row=r, field="Color")
-            teams[code] = Team(code, _text(rec["Name"]) or code, home, color)
+            teams[code] = Team(code, _text(rec["Name"]) or code, color)
         if len(teams) < 2 and SHEET_TEAMS in self.wb.sheetnames:
             self._issue(Level.ERROR, SHEET_TEAMS, "at least two teams are required")
 
-        for vcode, (r, owner) in self._venue_owner_rows.items():
-            if owner not in teams:
-                self._issue(Level.ERROR, SHEET_VENUES, f"venue owner '{owner}' is not a team", row=r, field="Team")
-            elif teams[owner].home_venue != vcode:
-                self._issue(Level.WARNING, SHEET_VENUES, f"venue owned by {owner}, but {owner}'s home venue "
-                            f"is {teams[owner].home_venue}", row=r, field="Team")
-        homes: dict[str, str] = {}
-        for t in teams.values():
-            if t.home_venue in homes:
-                self._issue(Level.WARNING, SHEET_TEAMS, f"{t.code} and {homes[t.home_venue]} share home venue "
-                            f"{t.home_venue}; only one of them can host on any date")
-            homes.setdefault(t.home_venue, t.code)
         return teams
 
     # --- Rules -------------------------------------------------------------------
 
-    def _rules(self, settings: Settings, teams: dict[str, Team], venues: dict[str, Venue]) -> list[Rule]:
+    def _rules(self, settings: Settings, teams: dict[str, Team]) -> list[Rule]:
         rules: list[Rule] = []
         seen_ids: dict[str, int] = {}
         for r, rec in self._table(SHEET_RULES, RULE_COLUMNS):
-            rule, enabled = _RuleRow(self, r, rec, settings, teams, venues, seen_ids).parse()
+            rule, enabled = _RuleRow(self, r, rec, settings, teams, seen_ids).parse()
             if rule is not None and enabled:
                 rules.append(rule)
         if not rules and SHEET_RULES in self.wb.sheetnames:
@@ -264,7 +220,7 @@ class _Loader:
 
     # --- Locks --------------------------------------------------------------------
 
-    def _locks(self, settings: Settings, teams: dict[str, Team], venues: dict[str, Venue]) -> list[Lock]:
+    def _locks(self, settings: Settings, teams: dict[str, Team]) -> list[Lock]:
         locks: list[Lock] = []
         for r, rec in self._table(SHEET_LOCKS, LOCK_COLUMNS, required=False):
             errors_before = len(self.issues)
@@ -281,11 +237,8 @@ class _Loader:
                     self._issue(Level.ERROR, SHEET_LOCKS, f"unknown team '{code}'", row=r, field=col)
             if home and home == away:
                 self._issue(Level.ERROR, SHEET_LOCKS, "a team can't play itself", row=r)
-            venue = _text(rec["Venue"]).upper() or None
-            if venue and venue not in venues:
-                self._issue(Level.ERROR, SHEET_LOCKS, f"unknown venue '{venue}'", row=r, field="Venue")
             if len(self.issues) == errors_before and d is not None:
-                locks.append(Lock(r, d, home, away, venue))
+                locks.append(Lock(r, d, home, away))
         return locks
 
 
@@ -293,9 +246,9 @@ class _RuleRow:
     """Parses and validates one Rules row."""
 
     def __init__(self, loader: _Loader, row: int, rec: dict[str, Any], settings: Settings,
-                 teams: dict[str, Team], venues: dict[str, Venue], seen_ids: dict[str, int]):
+                 teams: dict[str, Team], seen_ids: dict[str, int]):
         self.loader, self.row, self.rec = loader, row, rec
-        self.settings, self.teams, self.venues, self.seen_ids = settings, teams, venues, seen_ids
+        self.settings, self.teams, self.seen_ids = settings, teams, seen_ids
         self.rule_id = _text(rec["ID"])
         self.enabled = True
         self.failed = False
@@ -343,7 +296,6 @@ class _RuleRow:
 
         kw: dict[str, Any] = {}
         team_codes = set(self.teams)
-        venue_codes = set(self.venues)
 
         def parse(f: str, fn, *args):
             if f not in spec.fields or _blank(values[f]):
@@ -359,9 +311,8 @@ class _RuleRow:
             teams = frozenset(team_codes)
         kw["teams"] = teams or frozenset()
         kw["opponents"] = parse("opponents", sel.parse_codes, team_codes, "team") or frozenset()
-        kw["venues"] = parse("venues", sel.parse_codes, venue_codes, "venue") or frozenset()
-        kw["from_loc"] = parse("from", sel.parse_location, venue_codes)
-        kw["to_loc"] = parse("to", sel.parse_location, venue_codes)
+        kw["from_loc"] = parse("from", sel.parse_location, team_codes)
+        kw["to_loc"] = parse("to", sel.parse_location, team_codes)
         kw["dates"] = parse("dates", sel.parse_dates, self.settings.season_start, self.settings.season_end) \
             or frozenset()
         kw["days"] = parse("days", sel.parse_days) or frozenset()
@@ -445,8 +396,6 @@ class _RuleRow:
             self.issue("Teams must name exactly one team", "Teams")
         if spec.single_opponent and len(kw["opponents"]) > 1:
             self.issue("Opponents must name exactly one team", "Opponents")
-        if spec.single_venue and len(kw["venues"]) > 1:
-            self.issue("Venues must name exactly one venue", "Venues")
         if "teams" in spec.fields and spec.fields["teams"].required is False and not kw["teams"] \
                 and not _blank(self.rec["Teams"]):
             self.issue("Teams selects no teams", "Teams")

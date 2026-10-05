@@ -36,7 +36,7 @@ def _validate(path: str) -> int:
         s = run.settings
         types = Counter(r.type for r in run.rules)
         hard = sum(r.hard for r in run.rules)
-        print(f"\n{len(run.teams)} teams, {len(run.venues)} venues, season {s.season_start} to "
+        print(f"\n{len(run.teams)} teams, season {s.season_start} to "
               f"{s.season_end} ({len(run.season_dates)} days)")
         print(f"{len(run.rules)} enabled rules ({hard} hard, {len(run.rules) - hard} soft), "
               f"{len(run.locks)} locked games")
