@@ -60,8 +60,9 @@ RULES = [
          Dates="6/23, 7/15", Weight=50, Note="Duke flex dates: avoid unless needed"),
     rule("R17", "AVAILABILITY", Teams="UTA", Role="home", Option="cannot", Dates="8/1-end",
          Note="No Utah home games in August"),
-    rule("R18", "AVAILABILITY", Teams="ALL except CHI", Role="home", Option="cannot", Dates="7/11-7/15",
-         Note="Only Chicago hosts 7/11-15 (All-Star Weekend travel)"),
+    rule("R18", "AVAILABILITY", "Soft", Teams="ALL except CHI", Role="home", Option="cannot", Dates="7/11-7/15",
+         Weight=100, Note="Only Chicago hosts 7/11-15 (All-Star Weekend travel). Soft because it conflicts "
+         "with R10 (Round Rock must host 7/15); as Hard there is no valid schedule"),
     rule("R19", "AVAILABILITY", Teams="OKC", Role="home", Option="cannot", Dates="8/8-end",
          Note="TBD: assume no OKC home dates after 1st week of August"),
     rule("R20", "AVAILABILITY", Teams="PDX", Role="home", Option="only", Dates=PDX_WINDOWS,
