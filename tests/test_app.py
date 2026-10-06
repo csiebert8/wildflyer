@@ -56,7 +56,13 @@ def test_run_folders(tmp_path):
     b = new_run_folder(rules, "my run / v1", tmp_path / "runs")
     assert a != b and a.name.endswith("my_run_v1") and (a / "rules.xlsx").exists()
     assert list_runs(tmp_path / "runs") == []  # no schedules yet
-    (a / "schedule.xlsx").write_bytes(b"x")
+    (a / "schedule.xlsx").write_bytes(b"not a workbook")
+    assert list_runs(tmp_path / "runs") == []  # unreadable / schedule-less runs are hidden
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    wb.active.title = "List"
+    wb.save(a / "schedule.xlsx")
     runs = list_runs(tmp_path / "runs")
     assert [r.folder for r in runs] == [a] and runs[0].name == "my_run_v1" and runs[0].created
 
@@ -97,5 +103,5 @@ def test_app_page_stops_on_errors(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     at = AppTest.from_file(str(APP), default_timeout=60).run()
     assert not at.exception
-    assert any("must be fixed" in e.value for e in at.error)
+    assert any("to fix before solving" in e.value for e in at.error)
     assert not any(b.label == "▶ Solve" for b in at.button)

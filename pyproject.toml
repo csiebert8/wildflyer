@@ -23,6 +23,9 @@ wildflyer = "wildflyer.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+wildflyer = ["assets/*.png"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]

@@ -47,13 +47,28 @@ def new_run_folder(rules_path: str | Path, run_name: str, base: Path = RUNS_DIR)
     return folder
 
 
+def has_schedule(path: Path) -> bool:
+    """True if `path` is an output workbook containing a schedule (runs that found none only have a Summary)."""
+    if not path.is_file():
+        return False
+    try:
+        import openpyxl
+
+        wb = openpyxl.load_workbook(path, read_only=True)
+        found = "List" in wb.sheetnames
+        wb.close()
+        return found
+    except Exception:
+        return False
+
+
 def list_runs(base: Path = RUNS_DIR) -> list[RunInfo]:
     """Run folders that hold a schedule, newest first."""
     if not base.is_dir():
         return []
     runs = []
     for folder in base.iterdir():
-        if not (folder / SCHEDULE_FILE).is_file():
+        if not has_schedule(folder / SCHEDULE_FILE):
             continue
         m = re.match(r"(\d{4}-\d{2}-\d{2}_\d{6})_(.*)", folder.name)
         created = None

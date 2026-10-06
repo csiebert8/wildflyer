@@ -1,4 +1,4 @@
-# Wildflyer
+# AUSL Schedule Solver (wildflyer)
 
 A constraint-based sports league scheduler. You describe a league and a set of
 hard and soft rules in an Excel workbook, and Wildflyer finds the best schedule
@@ -9,7 +9,7 @@ and 30 games per team.
 
 ## Using the app (recommended)
 
-**Mac:** double-click **`Wildflyer.command`** in the `wildflyer` folder. The
+**Mac:** double-click **`AUSL Schedule Solver.command`** in the `wildflyer` folder. The
 first time, it sets everything up (a few minutes). Your browser then opens the
 app at `http://localhost:8501`. Keep the Terminal window that opens; close it
 to quit the app. If macOS says it can't open the file, right-click it and

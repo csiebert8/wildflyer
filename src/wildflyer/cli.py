@@ -17,7 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="wildflyer", description="Sports league scheduler")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("app", help="open the Wildflyer app in your browser (this computer only)")
+    p = sub.add_parser("app", help="open the AUSL Schedule Solver app in your browser (this computer only)")
     p.add_argument("--port", type=int, default=8501, help="local port (default 8501)")
 
     p = sub.add_parser("template", help="write a blank input workbook")
@@ -84,13 +84,22 @@ def _solve(path: str, output: str | None, time_limit: float | None, log: bool) -
     return 0 if solved.has_schedule else 2
 
 
+# Local-only server, no usage stats, no Deploy button, AUSL colours.
+APP_FLAGS = (
+    "--server.address", "localhost", "--browser.gatherUsageStats", "false",
+    "--client.toolbarMode", "viewer",
+    "--theme.base", "light", "--theme.primaryColor", "#F5831F",
+    "--theme.backgroundColor", "#F6F6F7", "--theme.secondaryBackgroundColor", "#EEEEF0",
+    "--theme.textColor", "#111111",
+)
+
+
 def _app(port: int) -> int:
     app = Path(__file__).with_name("app.py")
-    print(f"Starting Wildflyer at http://localhost:{port} (press Ctrl+C here to quit)")
-    return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app),
-                            "--server.address", "localhost", "--server.port", str(port),
-                            "--browser.gatherUsageStats", "false", "--server.headless", "false",
-                            "--client.toolbarMode", "viewer"])
+    print(f"Starting AUSL Schedule Solver at http://localhost:{port} (close this window or press Ctrl+C "
+          "to quit)")
+    return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app), *APP_FLAGS,
+                            "--server.port", str(port), "--server.headless", "false"])
 
 
 def _compare(old: str, new: str) -> int:
