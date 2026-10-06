@@ -325,7 +325,11 @@ with tab_new:
                 st.rerun(scope="app")
             c = job.control
             if c.phase == "diagnosing":
-                st.info("No schedule satisfies every hard rule. Working out which rules conflict…")
+                left = c.diagnose_left
+                st.info("**No schedule satisfies every hard rule.** Looking for the rules that conflict "
+                        f"(at most {int(c.diagnose_budget)} s)…")
+                st.progress(1 - left / c.diagnose_budget if c.diagnose_budget else 1.0,
+                            text=f"Finding the cause · {int(left)} s left")
             else:
                 elapsed = min(c.elapsed, job.time_limit)
                 st.progress(elapsed / job.time_limit if job.time_limit else 0.0,
@@ -338,7 +342,8 @@ with tab_new:
                 if c.solutions == 0:
                     st.markdown('<span class="muted">Searching for a first schedule that meets every hard '
                                 'rule…</span>', unsafe_allow_html=True)
-            if st.button("■ Stop and keep the best so far", disabled=c.stopped):
+            stop_label = "■ Stop looking for the cause" if c.phase == "diagnosing" else "■ Stop and keep the best so far"
+            if st.button(stop_label, disabled=c.stopped):
                 job.stop()
 
         if busy:

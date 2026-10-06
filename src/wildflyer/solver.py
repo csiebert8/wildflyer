@@ -22,7 +22,15 @@ __all__ = ["Game", "Penalty", "SolveControl", "SolveResult", "ScheduleModel", "s
 # Soft weights may be decimals; CP-SAT needs integer objective coefficients.
 WEIGHT_SCALE = 100
 CHANGE_RULE_ID = "BASE"  # pseudo rule id for "keep base-run games" penalties
-DIAGNOSE_SECONDS = 120  # budget for finding the conflicting hard rules
+DIAGNOSE_MAX_SECONDS = 60  # most time spent finding the conflicting hard rules
+DIAGNOSE_MIN_SECONDS = 10  # least, even when the time limit is already used up
+MAX_CONFLICTS_SHOWN = 6  # a longer list means "too tight overall" rather than a specific clash
+TOO_TIGHT_MESSAGE = (
+    "No schedule satisfies all the hard rules, and the cause couldn't be narrowed to a few rules in the "
+    "time allowed. This usually means several hard timing rules are too tight together (travel rest, "
+    "games in a window, consecutive days, homestand / road-trip limits, blackout dates). Try making "
+    "some of them Soft, or relaxing the hard rules you changed most recently."
+)
 
 
 class SolveControl:
@@ -41,6 +49,14 @@ class SolveControl:
         self.solutions = 0
         self.stopped = False
         self.phase = "waiting"  # waiting | solving | diagnosing | done
+        self.diagnose_started: float | None = None
+        self.diagnose_budget: float = 0.0
+
+    @property
+    def diagnose_left(self) -> float:
+        if self.diagnose_started is None:
+            return 0.0
+        return max(0.0, self.diagnose_budget - (time.monotonic() - self.diagnose_started))
 
     @property
     def elapsed(self) -> float:
@@ -749,7 +765,7 @@ class ScheduleModel:
         origin = next((hosts[t, self.dates[i]] for i in range(j - 1, -1, -1) if (t, self.dates[i]) in hosts), "?")
         return f"{t}: {origin} → {b} on {self.dates[j]}: {term.label}"
 
-    def find_conflicts(self, time_budget: float = DIAGNOSE_SECONDS,
+    def find_conflicts(self, time_budget: float = DIAGNOSE_MAX_SECONDS,
                        control: SolveControl | None = None) -> list[str] | None:
         """In diagnose mode: a small set of hard rules (and locks) that can't all hold.
 
@@ -807,13 +823,20 @@ def solve(run: RunInput, time_limit: float | None = None, workers: int | None = 
           log: bool = False, diagnose: bool = True, control: SolveControl | None = None) -> SolveResult:
     """Solve `run`. If the hard rules contradict each other and `diagnose` is set, also work out
     which rules conflict (result.conflicts). `control` reports progress and allows stopping early."""
-    result = ScheduleModel(run).solve(time_limit, workers, log, control)
+    limit = float(time_limit or run.settings.time_limit_seconds)
+    result = ScheduleModel(run).solve(limit, workers, log, control)
     if result.status == "infeasible" and diagnose and not (control and control.stopped):
-        conflicts = ScheduleModel(run, diagnose=True).find_conflicts(control=control)
-        if conflicts:
+        # Stay within the user's time limit: diagnose with what's left of it (bounded both ways).
+        budget = min(DIAGNOSE_MAX_SECONDS, max(DIAGNOSE_MIN_SECONDS, limit - result.wall_time))
+        if control is not None:
+            control.diagnose_started, control.diagnose_budget = time.monotonic(), budget
+        conflicts = ScheduleModel(run, diagnose=True).find_conflicts(budget, control=control)
+        if conflicts and len(conflicts) <= MAX_CONFLICTS_SHOWN:
             result.conflicts = conflicts
             result.message = ("The hard rules contradict each other. These rules can't all hold at once; "
                               "change, disable or soften at least one of them.")
+        elif not (control and control.stopped):
+            result.message = TOO_TIGHT_MESSAGE
     if control is not None:
         control.phase = "done"
     return result

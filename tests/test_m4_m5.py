@@ -196,3 +196,16 @@ def test_solve_without_output_makes_run_folder(tmp_path, monkeypatch):
     folders = list((tmp_path / "runs").iterdir())
     assert len(folders) == 1 and folders[0].name.endswith("_my_run")
     assert {p.name for p in folders[0].iterdir()} == {"rules.xlsx", "schedule.xlsx"}
+
+
+def test_diagnosis_respects_time_limit_and_caps_list(monkeypatch):
+    """When the cause can't be narrowed to a few rules, say so instead of listing everything."""
+    import wildflyer.solver as solver_mod
+
+    rules = [DOUBLE_RR,
+             R("AVAILABILITY", id="MUST", teams={"T1"}, role="home", option="must", dates={day(3)}),
+             R("AVAILABILITY", id="CANT", teams={"T1"}, option="cannot", dates={day(2), day(3)})]
+    monkeypatch.setattr(solver_mod, "MAX_CONFLICTS_SHOWN", 1)  # pretend the 2-rule core is "too many"
+    result = solve(make_run(rules), time_limit=20)
+    assert result.status == "infeasible" and result.conflicts == []
+    assert "couldn't be narrowed" in result.message
