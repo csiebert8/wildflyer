@@ -305,24 +305,7 @@ def _checks(ws: Worksheet, run: RunInput, result: SolveResult) -> None:
     ws.append(["Schedule checks"])
     ws.cell(1, 1).font = Font(bold=True, size=14)
 
-    # Per-team totals.
-    body = []
-    for t in teams:
-        seq = analysis.sequence(result.games, t)
-        moves = analysis.moves(seq)
-        home_runs, away_runs = analysis.runs(seq, True), analysis.runs(seq, False)
-        body.append((
-            t, len(seq), sum(a.home for a in seq), sum(not a.home for a in seq),
-            sum(a.home and a.date.weekday() >= 4 for a in seq),
-            max((analysis.span_days(r) for r in home_runs), default=0),
-            max((analysis.span_days(r) for r in away_runs), default=0),
-            analysis.max_streak(seq), len(moves),
-            min((analysis.off_days_between(a, b) for a, b in moves), default=None),
-            min(analysis.rematch_gaps(seq), default=None),
-        ))
-    _table(ws, "Teams", ("Team", "Games", "Home", "Away", "Home Fri-Sun", "Longest homestand (days)",
-                         "Longest road trip (days)", "Most game days in a row", "Moves",
-                         "Fewest off days on a move", "Shortest rematch gap (days)"), body)
+    _table(ws, "Teams", analysis.TEAM_SUMMARY_COLUMNS, analysis.team_summary(result.games, teams))
 
     # Matchup matrix: games each row team hosts each column team.
     hosted = Counter((g.home, g.away) for g in result.games)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,9 @@ import openpyxl
 from . import selectors as sel
 from .catalog import CATALOG, FIELDS, RuleSpec
 from .model import Game, Issue, Level, Lock, Rule, RunInput, Settings, Team
+
+# Excel adds dropdown "extensions" openpyxl can't read; harmless, but noisy on every load.
+warnings.filterwarnings("ignore", message="Data Validation extension", category=UserWarning)
 
 SHEET_SETTINGS = "Settings"
 SHEET_TEAMS = "Teams"

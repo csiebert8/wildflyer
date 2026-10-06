@@ -1,22 +1,24 @@
-"""Command line entry point: `wildflyer template | validate | solve | compare`."""
+"""Command line entry point: `wildflyer app | template | validate | solve | compare`."""
 
 from __future__ import annotations
 
 import argparse
-import re
-import shutil
+import subprocess
 import sys
 from collections import Counter
-from datetime import datetime
 from pathlib import Path
 
 from .loader import load
+from .runs import new_run_folder
 from .template import write_template
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="wildflyer", description="Sports league scheduler")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("app", help="open the Wildflyer app in your browser (this computer only)")
+    p.add_argument("--port", type=int, default=8501, help="local port (default 8501)")
 
     p = sub.add_parser("template", help="write a blank input workbook")
     p.add_argument("path", help="where to write the .xlsx")
@@ -36,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("new", help="later schedule .xlsx")
 
     args = parser.parse_args(argv)
+    if args.command == "app":
+        return _app(args.port)
     if args.command == "compare":
         return _compare(args.old, args.new)
     if args.command == "template":
@@ -60,11 +64,7 @@ def _solve(path: str, output: str | None, time_limit: float | None, log: bool) -
     if output:
         out = Path(output)
     else:
-        name = re.sub(r"[^A-Za-z0-9_.-]+", "_", run.settings.run_name or Path(path).stem)
-        folder = Path("runs") / f"{datetime.now():%Y-%m-%d_%H%M%S}_{name}"
-        folder.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, folder / "rules.xlsx")
-        out = folder / "schedule.xlsx"
+        out = new_run_folder(path, run.settings.run_name or Path(path).stem) / "schedule.xlsx"
     limit = time_limit or run.settings.time_limit_seconds
     print(f"Solving {len(run.teams)} teams over {len(run.season_dates)} days "
           f"with {len(run.rules)} rules (time limit {limit:g}s)...")
@@ -82,6 +82,15 @@ def _solve(path: str, output: str | None, time_limit: float | None, log: bool) -
             print(f"  {p.rule.id}: {p.label} (cost {p.cost:g})")
     print(f"Wrote {write_output(out, run, solved, path)}")
     return 0 if solved.has_schedule else 2
+
+
+def _app(port: int) -> int:
+    app = Path(__file__).with_name("app.py")
+    print(f"Starting Wildflyer at http://localhost:{port} (press Ctrl+C here to quit)")
+    return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app),
+                            "--server.address", "localhost", "--server.port", str(port),
+                            "--browser.gatherUsageStats", "false", "--server.headless", "false",
+                            "--client.toolbarMode", "viewer"])
 
 
 def _compare(old: str, new: str) -> int:

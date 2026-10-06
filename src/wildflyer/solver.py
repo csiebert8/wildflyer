@@ -7,6 +7,7 @@ Each enabled rule row compiles to constraints (hard) or penalty terms (soft).
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -16,12 +17,67 @@ from ortools.sat.python import cp_model
 
 from .model import Game, Lock, Rule, RunInput
 
-__all__ = ["Game", "Penalty", "SolveResult", "ScheduleModel", "solve", "CHANGE_RULE_ID"]
+__all__ = ["Game", "Penalty", "SolveControl", "SolveResult", "ScheduleModel", "solve", "CHANGE_RULE_ID"]
 
 # Soft weights may be decimals; CP-SAT needs integer objective coefficients.
 WEIGHT_SCALE = 100
 CHANGE_RULE_ID = "BASE"  # pseudo rule id for "keep base-run games" penalties
 DIAGNOSE_SECONDS = 120  # budget for finding the conflicting hard rules
+
+
+class SolveControl:
+    """Live progress of a running solve, and a way to stop it early (thread-safe).
+
+    Pass one to `solve()`; another thread can read `best_cost`, `solutions` and
+    `elapsed`, and call `stop()` to end the search and keep the best schedule so far.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._solver: cp_model.CpSolver | None = None
+        self.started: float | None = None
+        self.time_limit: float = 0.0
+        self.best_cost: float | None = None
+        self.solutions = 0
+        self.stopped = False
+        self.phase = "waiting"  # waiting | solving | diagnosing | done
+
+    @property
+    def elapsed(self) -> float:
+        return 0.0 if self.started is None else time.monotonic() - self.started
+
+    def stop(self) -> None:
+        with self._lock:
+            self.stopped = True
+            if self._solver is not None:
+                self._solver.stop_search()
+
+    def _attach(self, solver: cp_model.CpSolver, time_limit: float, phase: str) -> None:
+        with self._lock:
+            self._solver = solver
+            self.phase = phase
+            if phase == "solving":
+                self.started, self.time_limit = time.monotonic(), time_limit
+            if self.stopped:
+                solver.stop_search()
+
+    def _detach(self) -> None:
+        with self._lock:
+            self._solver = None
+
+    def _found(self, cost: float) -> None:
+        with self._lock:
+            self.solutions += 1
+            self.best_cost = cost
+
+
+class _ProgressCallback(cp_model.CpSolverSolutionCallback):
+    def __init__(self, control: SolveControl, has_objective: bool):
+        super().__init__()
+        self.control, self.has_objective = control, has_objective
+
+    def on_solution_callback(self) -> None:
+        self.control._found(self.objective_value / WEIGHT_SCALE if self.has_objective else 0.0)
 
 
 @dataclass
@@ -640,13 +696,21 @@ class ScheduleModel:
     # --- solving ----------------------------------------------------------------------
 
     def solve(self, time_limit: float | None = None, workers: int | None = None,
-              log: bool = False) -> SolveResult:
+              log: bool = False, control: SolveControl | None = None) -> SolveResult:
+        limit = float(time_limit or self.run.settings.time_limit_seconds)
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = float(time_limit or self.run.settings.time_limit_seconds)
+        solver.parameters.max_time_in_seconds = limit
         solver.parameters.num_workers = workers or min(8, os.cpu_count() or 1)
         solver.parameters.log_search_progress = log
         started = time.monotonic()
-        code = solver.solve(self.m)
+        if control is not None:
+            control._attach(solver, limit, "solving")
+            try:
+                code = solver.solve(self.m, _ProgressCallback(control, self.m.has_objective()))
+            finally:
+                control._detach()
+        else:
+            code = solver.solve(self.m)
         elapsed = time.monotonic() - started
         status = {
             cp_model.OPTIMAL: "optimal",
@@ -662,6 +726,9 @@ class ScheduleModel:
                               "doesn't help, the hard rules may be contradictory.")
         elif status == "invalid":
             result.message = f"Internal model error: {self.m.validate()}"
+        if control is not None and control.stopped:
+            result.message = ("Stopped early: this is the best schedule found so far." if result.has_schedule
+                              else "Stopped before any schedule was found.")
         if not result.has_schedule:
             return result
         result.games = sorted(
@@ -682,7 +749,8 @@ class ScheduleModel:
         origin = next((hosts[t, self.dates[i]] for i in range(j - 1, -1, -1) if (t, self.dates[i]) in hosts), "?")
         return f"{t}: {origin} → {b} on {self.dates[j]}: {term.label}"
 
-    def find_conflicts(self, time_budget: float = DIAGNOSE_SECONDS) -> list[str] | None:
+    def find_conflicts(self, time_budget: float = DIAGNOSE_SECONDS,
+                       control: SolveControl | None = None) -> list[str] | None:
         """In diagnose mode: a small set of hard rules (and locks) that can't all hold.
 
         Solves with every hard rule switched on as an assumption; CP-SAT then reports a subset
@@ -703,7 +771,16 @@ class ScheduleModel:
             solver.parameters.num_workers = min(8, os.cpu_count() or 1)
             self.m.clear_assumptions()
             self.m.add_assumptions([self.guards[n] for n in active])
-            if solver.solve(self.m) != cp_model.INFEASIBLE:
+            if control is not None:
+                if control.stopped:
+                    break
+                control._attach(solver, remaining, "diagnosing")
+            try:
+                code = solver.solve(self.m)
+            finally:
+                if control is not None:
+                    control._detach()
+            if code != cp_model.INFEASIBLE:
                 break
             core = [by_index[i] for i in solver.sufficient_assumptions_for_infeasibility() if i in by_index]
             if not core:
@@ -727,14 +804,16 @@ def _lock_description(lock: Lock) -> str:
 
 
 def solve(run: RunInput, time_limit: float | None = None, workers: int | None = None,
-          log: bool = False, diagnose: bool = True) -> SolveResult:
+          log: bool = False, diagnose: bool = True, control: SolveControl | None = None) -> SolveResult:
     """Solve `run`. If the hard rules contradict each other and `diagnose` is set, also work out
-    which rules conflict (result.conflicts)."""
-    result = ScheduleModel(run).solve(time_limit, workers, log)
-    if result.status == "infeasible" and diagnose:
-        conflicts = ScheduleModel(run, diagnose=True).find_conflicts()
+    which rules conflict (result.conflicts). `control` reports progress and allows stopping early."""
+    result = ScheduleModel(run).solve(time_limit, workers, log, control)
+    if result.status == "infeasible" and diagnose and not (control and control.stopped):
+        conflicts = ScheduleModel(run, diagnose=True).find_conflicts(control=control)
         if conflicts:
             result.conflicts = conflicts
             result.message = ("The hard rules contradict each other. These rules can't all hold at once; "
                               "change, disable or soften at least one of them.")
+    if control is not None:
+        control.phase = "done"
     return result

@@ -1,8 +1,6 @@
 """Preferences, conflict diagnosis, reports (M4) and base runs / comparison (M5)."""
 
-import os
 from collections import Counter
-from datetime import date
 
 import openpyxl
 import pytest

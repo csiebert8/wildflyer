@@ -4,16 +4,47 @@ A constraint-based sports league scheduler. You describe a league and a set of
 hard and soft rules in an Excel workbook, and Wildflyer finds the best schedule
 it can. See [SCOPE.md](SCOPE.md) for the full MVP scope.
 
-**Status:** MVP complete (M1-M5). Sized for leagues of about 6 teams, 60 days
+**Status:** MVP complete (M1-M5) plus a local web app. Sized for leagues of about 6 teams, 60 days
 and 30 games per team.
 
-## Setup
+## Using the app (recommended)
+
+**Mac:** double-click **`Wildflyer.command`** in the `wildflyer` folder. The
+first time, it sets everything up (a few minutes). Your browser then opens the
+app at `http://localhost:8501`. Keep the Terminal window that opens; close it
+to quit the app. If macOS says it can't open the file, right-click it and
+choose **Open** once.
+
+**Or from Terminal:**
 
 ```bash
+source .venv/bin/activate
+wildflyer app
+```
+
+The app only runs on this computer. Its workflow:
+
+1. **Rules file:** choose an Excel rules workbook from the `wildflyer` folder,
+   upload one, or download a blank template.
+2. **Check:** the file is checked automatically. Errors stop you, with
+   sheet/row/column; warnings don't. After editing in Excel, save and click
+   **Re-check file**.
+3. **Solve:** set the time limit and click **Solve**. You'll see time left,
+   the best cost so far, and a **Stop and keep the best so far** button.
+4. **Result:** status, soft cost, a colored schedule preview, soft rule
+   violations, rule statuses, team checks, and **Download schedule**.
+5. **Past runs:** every run is saved in `runs/`; download its schedule or the
+   rules used, preview it, or compare two runs.
+
+## Setup (for the command line)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-## Usage
+## Command line usage
 
 ```bash
 # Write a blank input workbook

@@ -91,3 +91,26 @@ def compare(old: list[Game], new: list[Game]) -> tuple[list[Game], list[Game]]:
     removed = sorted(old_set - new_set, key=lambda g: (g.date, g.home))
     added = sorted(new_set - old_set, key=lambda g: (g.date, g.home))
     return removed, added
+
+
+TEAM_SUMMARY_COLUMNS = ("Team", "Games", "Home", "Away", "Home Fri-Sun", "Longest homestand (days)",
+                        "Longest road trip (days)", "Most game days in a row", "Moves",
+                        "Fewest off days on a move", "Shortest rematch gap (days)")
+
+
+def team_summary(games: list[Game], teams: list[str]) -> list[tuple]:
+    """One row per team, in TEAM_SUMMARY_COLUMNS order."""
+    rows = []
+    for t in teams:
+        seq = sequence(games, t)
+        mv = moves(seq)
+        rows.append((
+            t, len(seq), sum(a.home for a in seq), sum(not a.home for a in seq),
+            sum(a.home and a.date.weekday() >= 4 for a in seq),
+            max((span_days(r) for r in runs(seq, True)), default=0),
+            max((span_days(r) for r in runs(seq, False)), default=0),
+            max_streak(seq), len(mv),
+            min((off_days_between(a, b) for a, b in mv), default=None),
+            min(rematch_gaps(seq), default=None),
+        ))
+    return rows
