@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import io
+from datetime import datetime
 import subprocess
 import sys
 from collections import Counter
@@ -22,7 +23,7 @@ from wildflyer.jobs import Job, start_job
 from wildflyer.loader import LoadResult, load, read_schedule
 from wildflyer.model import Game, Level, RunInput
 from wildflyer.output import text_color
-from wildflyer.runs import RUNS_DIR, list_runs
+from wildflyer.runs import RUNS_DIR, file_digest, list_runs
 from wildflyer.template import build_workbook
 
 APP_NAME = "AUSL Schedule Solver"
@@ -223,7 +224,12 @@ with tab_new:
         with left:
             if files:
                 labels = {str(p.relative_to(WORKDIR)): p for p in files}
-                choice = st.selectbox("Rules workbook", list(labels), disabled=busy,
+                pending = st.session_state.pop("pending_choice", None)
+                if pending in labels:
+                    st.session_state["rules_choice"] = pending
+                elif st.session_state.get("rules_choice") not in labels:
+                    st.session_state.pop("rules_choice", None)
+                choice = st.selectbox("Rules workbook", list(labels), disabled=busy, key="rules_choice",
                                       help="Files in your folder, newest first. After editing in Excel, "
                                            "save and click Re-check.")
                 rules_path = labels[choice]
@@ -236,15 +242,21 @@ with tab_new:
                 st.info("No Excel files in your folder yet. Upload one, or start from a blank template.")
         with right:
             uploaded = st.file_uploader("Add a rules file", type=["xlsx"], disabled=busy)
-            if uploaded is not None:
+            done_uploads: dict = st.session_state.setdefault("done_uploads", {})
+            if uploaded is not None and uploaded.file_id not in done_uploads:
+                # Save each upload once (the uploader keeps it across reruns), never overwriting a file.
+                data = uploaded.getvalue()
                 target = WORKDIR / Path(uploaded.name).name
-                if not (target.exists() and target.read_bytes() == uploaded.getvalue()):
-                    stem, n = target.stem, 2
-                    while target.exists():
-                        target = WORKDIR / f"{stem}_{n}.xlsx"
-                        n += 1
-                    target.write_bytes(uploaded.getvalue())
-                    st.success(f"Saved as **{target.name}**. Choose it from the list.")
+                stem, n = target.stem, 2
+                while target.exists() and target.read_bytes() != data:
+                    target = WORKDIR / f"{stem}_{n}.xlsx"
+                    n += 1
+                target.write_bytes(data)
+                done_uploads[uploaded.file_id] = target.name
+                st.session_state["pending_choice"] = target.name
+                st.rerun()
+            if uploaded is not None and uploaded.file_id in done_uploads:
+                st.caption(f"Uploaded as **{done_uploads[uploaded.file_id]}** and selected.")
             buf = io.BytesIO()
             build_workbook().save(buf)
             st.download_button("Blank rules template", buf.getvalue(), "blank_rules.xlsx",
@@ -256,8 +268,11 @@ with tab_new:
     # 2. Check ------------------------------------------------------------------------------
     checked = load(rules_path) if not is_schedule(rules_path) else None
     run = checked.run if checked else None
+    digest = file_digest(rules_path)
+    saved_at = datetime.fromtimestamp(rules_path.stat().st_mtime)
     with st.container(border=True):
-        step(2, "Check", "done" if run else "active", rules_path.name)
+        step(2, "Check", "done" if run else "active",
+             f"{rules_path.name} · saved {saved_at:%b %d %H:%M} · checked {datetime.now():%H:%M:%S}")
         if checked is None:
             st.error("This looks like a schedule (output) file, not a rules file. Choose a rules workbook.")
         else:
@@ -281,9 +296,17 @@ with tab_new:
         st.stop()
 
     # 3. Solve ------------------------------------------------------------------------------
+    # Only show a result for exactly this file and version; anything else hasn't been solved yet.
+    result_current = (job is not None and job.finished and job.rules_digest == digest
+                      and job.rules_path.resolve() == rules_path.resolve())
     with st.container(border=True):
-        step(3, "Solve", "active" if not (job and job.finished) or busy else "done",
-             "Longer searches usually find better schedules")
+        step(3, "Solve", "done" if result_current else "active", "Longer searches usually find better schedules")
+        if job is not None and job.finished and not result_current:
+            why = ("The rules have changed since the last solve."
+                   if job.rules_path.resolve() == rules_path.resolve()
+                   else f"The last solve was for **{job.rules_path.name}**.")
+            st.info(f"**Not solved yet** for this version of **{rules_path.name}**. {why} Click **Solve** "
+                    "to build a schedule. Earlier results are saved under *Past runs & compare*.")
         c1, c2, _ = st.columns([1, 1, 2])
         time_limit = c1.number_input("Time limit (seconds)", min_value=10, max_value=3600, step=10,
                                      value=int(run.settings.time_limit_seconds), disabled=busy,
@@ -322,7 +345,7 @@ with tab_new:
             progress_panel()
 
     # 4. Result -----------------------------------------------------------------------------
-    if job is not None and job.finished:
+    if result_current:
         with st.container(border=True):
             step(4, "Result", "done")
             if job.error:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 from dataclasses import dataclass
@@ -32,6 +33,11 @@ class RunInfo:
     def label(self) -> str:
         when = self.created.strftime("%b %d %H:%M") if self.created else "?"
         return f"{when} · {self.name}"
+
+
+def file_digest(path: str | Path) -> str:
+    """Fingerprint of a file's contents, to tell whether a rules file changed since a solve."""
+    return hashlib.sha1(Path(path).read_bytes()).hexdigest()
 
 
 def new_run_folder(rules_path: str | Path, run_name: str, base: Path = RUNS_DIR) -> Path:

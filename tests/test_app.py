@@ -78,6 +78,9 @@ def test_background_job(tmp_path):
     job.wait(60)
     assert job.finished and job.error is None and job.result.has_schedule
     assert job.output.exists() and (job.folder / "rules.xlsx").exists()
+    from wildflyer.runs import file_digest
+
+    assert job.rules_digest == file_digest(src) == file_digest(job.folder / "rules.xlsx")
     assert list_runs(tmp_path / "runs")[0].folder == job.folder
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .model import RunInput
 from .output import write_output
-from .runs import RUNS_DIR, SCHEDULE_FILE, new_run_folder
+from .runs import RUNS_DIR, SCHEDULE_FILE, file_digest, new_run_folder
 from .solver import SolveControl, SolveResult, solve
 
 
@@ -19,6 +19,7 @@ class Job:
     run: RunInput
     time_limit: float
     folder: Path
+    rules_digest: str = ""  # contents fingerprint of the rules file when the solve started
     control: SolveControl = field(default_factory=SolveControl)
     result: SolveResult | None = None
     output: Path | None = None
@@ -52,8 +53,9 @@ class Job:
 
 def start_job(rules_path: str | Path, run: RunInput, time_limit: float, runs_dir: Path = RUNS_DIR) -> Job:
     rules_path = Path(rules_path)
+    digest = file_digest(rules_path)
     folder = new_run_folder(rules_path, run.settings.run_name or rules_path.stem, runs_dir)
-    job = Job(rules_path, run, time_limit, folder)
+    job = Job(rules_path, run, time_limit, folder, digest)
     job._thread = threading.Thread(target=job._work, name=f"solve-{folder.name}", daemon=True)
     job._thread.start()
     return job
