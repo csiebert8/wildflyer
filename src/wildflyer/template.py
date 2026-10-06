@@ -30,8 +30,11 @@ SETTINGS_HELP = {
     "Season start": "First date games may be scheduled (a full date, e.g. 2027-06-12)",
     "Season end": "Last date games may be scheduled",
     "Time limit (seconds)": "How long the solver may search (default 300)",
-    "Base run": "Optional: a previous run folder to compare against / minimize changes from",
-    "Change weight": "Optional: soft cost for each game that differs from the base run (0 = off)",
+    "Base run": "Optional: a previous schedule workbook (from wildflyer solve) to build from and compare "
+                "against, e.g. schedule_v3.xlsx (relative to this file's folder)",
+    "Change weight": "Optional: soft cost for each base-run game that is moved or dropped (blank/0 = off)",
+    "Lock base before": "Optional: freeze the schedule before this date exactly as in the base run "
+                        "(same games, none added)",
 }
 
 

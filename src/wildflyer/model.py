@@ -47,8 +47,9 @@ class Settings:
     season_end: date
     run_name: str = ""
     time_limit_seconds: int = 300
-    base_run: str | None = None
-    change_weight: float = 0.0  # soft cost per game differing from base run
+    base_run: str | None = None  # a previous schedule workbook to build from
+    change_weight: float = 0.0  # soft cost per base-run game not kept
+    lock_base_before: date | None = None  # base-run games before this date are locked
 
 
 @dataclass(frozen=True)
@@ -91,11 +92,19 @@ class Rule:
 
 
 @dataclass(frozen=True)
+class Game:
+    date: date
+    home: str
+    away: str
+
+
+@dataclass(frozen=True)
 class Lock:
     row: int
     date: date
     home: str
     away: str
+    from_base: bool = False  # created by Settings "Lock base before", not a Locks row
 
 
 @dataclass
@@ -104,6 +113,7 @@ class RunInput:
     teams: dict[str, Team]
     rules: list[Rule]
     locks: list[Lock] = field(default_factory=list)
+    base_games: list[Game] = field(default_factory=list)  # games of the base run, if any
 
     @property
     def season_dates(self) -> list[date]:

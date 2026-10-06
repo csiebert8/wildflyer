@@ -171,9 +171,11 @@ class TestSoft:
         assert result.soft_cost == 6
 
 
-def test_unsupported_rules_are_reported_not_applied():
-    result = solved([DOUBLE_RR, R("BALANCE", id="X", hard=False, weight=1, max=1)])
-    assert [r.id for r in result.skipped_rules] == ["X"]
+def test_every_catalog_rule_type_is_implemented():
+    from wildflyer.catalog import CATALOG
+    from wildflyer.solver import ScheduleModel
+
+    assert set(ScheduleModel(make_run()).compilers()) == set(CATALOG)
 
 
 @pytest.fixture(scope="module")
@@ -193,11 +195,11 @@ def test_example_workbook_solves(example, tmp_path):
                                                       (8, (12, 13, 14))) for d in ds}
     assert not any(g.home == "UTA" and g.date.month == 8 for g in result.games)
     out = write_output(tmp_path / "out.xlsx", run, result)
-    assert openpyxl.load_workbook(out).sheetnames == ["Grid", "List", "Summary"]
+    assert openpyxl.load_workbook(out).sheetnames == ["Grid", "List", "Rules", "Checks", "Summary"]
 
 
 def test_example_hard_sequence_rules(example):
-    from sequence_checks import blocks, max_streak, moves, off_days_between, rematch_gaps, sequence
+    from wildflyer.analysis import blocks, max_streak, moves, off_days_between, rematch_gaps, sequence
 
     run, result = example
     long_moves = {("CAR", "PDX"), ("CAR", "UTA"), ("PDX", "CAR"), ("UTA", "CAR"), ("TEX", "PDX"), ("PDX", "TEX")}

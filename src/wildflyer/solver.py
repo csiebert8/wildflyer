@@ -14,17 +14,22 @@ from typing import Callable
 
 from ortools.sat.python import cp_model
 
-from .model import Rule, RunInput
+from .model import Game, Lock, Rule, RunInput
+
+__all__ = ["Game", "Penalty", "SolveResult", "ScheduleModel", "solve", "CHANGE_RULE_ID"]
 
 # Soft weights may be decimals; CP-SAT needs integer objective coefficients.
 WEIGHT_SCALE = 100
+CHANGE_RULE_ID = "BASE"  # pseudo rule id for "keep base-run games" penalties
+DIAGNOSE_SECONDS = 120  # budget for finding the conflicting hard rules
 
 
-@dataclass(frozen=True)
-class Game:
-    date: date
-    home: str
-    away: str
+@dataclass
+class _Soft:
+    rule: Rule
+    label: str
+    expr: cp_model.LinearExprT
+    move: tuple[str, str, int] | None = None  # (team, destination host, day) for move labels
 
 
 @dataclass(frozen=True)
@@ -48,6 +53,8 @@ class SolveResult:
     skipped_rules: list[Rule] = field(default_factory=list)
     wall_time: float = 0.0
     message: str = ""
+    conflicts: list[str] = field(default_factory=list)  # hard rules that can't all hold together
+    rules: list[Rule] = field(default_factory=list)  # every rule applied, incl. the base-run rule
 
     @property
     def has_schedule(self) -> bool:
@@ -59,8 +66,13 @@ class SolveResult:
 
 
 class ScheduleModel:
-    def __init__(self, run: RunInput):
+    def __init__(self, run: RunInput, diagnose: bool = False):
+        """Build the model. With `diagnose`, every hard rule (and lock) is switched by its own
+        literal so the solver can report which ones conflict."""
         self.run = run
+        self.diagnose = diagnose
+        self.guards: dict[str, cp_model.IntVar] = {}  # description -> on/off literal
+        self._guard: cp_model.IntVar | None = None
         self.m = cp_model.CpModel()
         self.dates = run.season_dates
         self.day_index = {d: i for i, d in enumerate(self.dates)}
@@ -68,8 +80,8 @@ class ScheduleModel:
         self.teams = list(run.teams)
         self.skipped: list[Rule] = []
         self._cache: dict[str, dict] = {}
-        # (rule, label, linear expression counting violation units)
-        self._soft_terms: list[tuple[Rule, str, cp_model.LinearExprT]] = []
+        self._soft_terms: list[_Soft] = []
+        self.rules = list(run.rules)
 
         self.x: dict[tuple[str, str, int], cp_model.IntVar] = {}
         for h in self.teams:
@@ -93,9 +105,31 @@ class ScheduleModel:
                 self.m.add(p == h + a)
 
         for lock in run.locks:
-            self.m.add(self.x[lock.home, lock.away, self.day_index[lock.date]] == 1)
+            if lock.date not in self.day_index:
+                continue
+            self._guard = self._new_guard(_lock_description(lock))
+            self._hard(self.m.add(self.x[lock.home, lock.away, self.day_index[lock.date]] == 1))
+        self._guard = None
 
-        compilers: dict[str, Callable[[Rule], None]] = {
+        compilers = self.compilers()
+        for rule in run.rules:
+            compile_rule = compilers.get(rule.type)
+            if compile_rule is None:
+                self.skipped.append(rule)
+                continue
+            self._guard = self._new_guard(_rule_description(rule)) if rule.hard else None
+            compile_rule(rule)
+        self._guard = None
+        self._freeze_before_cutoff()
+        self._keep_base_games()
+        if not diagnose:
+            objective = [round(t.rule.weight * WEIGHT_SCALE) * t.expr for t in self._soft_terms]
+            if objective:
+                self.m.minimize(sum(objective))
+
+    def compilers(self) -> dict[str, Callable[[Rule], None]]:
+        """Rule type -> method that adds the rule to the model."""
+        return {
             "LEAGUE_BLACKOUT": self._league_blackout,
             "SEASON_WINDOW": self._season_window,
             "MATCHUP_GAMES": self._matchup_games,
@@ -111,18 +145,26 @@ class ScheduleModel:
             "HOME_AWAY_RUN": self._home_away_run,
             "MAX_CONSECUTIVE_GAME_DAYS": self._max_consecutive_game_days,
             "GAMES_IN_WINDOW": self._games_in_window,
+            "DATE_PREFERENCE": self._date_preference,
+            "BALANCE": self._balance,
         }
-        objective = []
-        for rule in run.rules:
-            compile_rule = compilers.get(rule.type)
-            if compile_rule is None:
-                self.skipped.append(rule)
-                continue
-            compile_rule(rule)
-        for rule, _, expr in self._soft_terms:
-            objective.append(round(rule.weight * WEIGHT_SCALE) * expr)
-        if objective:
-            self.m.minimize(sum(objective))
+
+    # --- hard-rule switches (diagnose mode) -------------------------------------------
+
+    def _new_guard(self, description: str) -> cp_model.IntVar | None:
+        if not self.diagnose:
+            return None
+        if description not in self.guards:
+            self.guards[description] = self.m.new_bool_var(f"guard_{len(self.guards)}")
+        return self.guards[description]
+
+    def _hard(self, constraint: cp_model.Constraint) -> None:
+        """Mark a constraint as belonging to the hard rule being compiled."""
+        if self._guard is not None:
+            constraint.only_enforce_if(self._guard)
+
+    def _guard_lits(self) -> list:
+        return [self._guard] if self._guard is not None else []
 
     # --- helpers ------------------------------------------------------------------
 
@@ -149,18 +191,18 @@ class ScheduleModel:
         """Require lo <= expr <= hi; `upper` is the largest value expr can take."""
         if rule.hard:
             if lo is not None:
-                self.m.add(expr >= lo)
+                self._hard(self.m.add(expr >= lo))
             if hi is not None:
-                self.m.add(expr <= hi)
+                self._hard(self.m.add(expr <= hi))
             return
         if lo is not None and lo > 0:
             short = self.m.new_int_var(0, lo, f"short_{rule.id}")
             self.m.add(expr + short >= lo)
-            self._soft_terms.append((rule, f"{label}: below minimum {lo}", short))
+            self._soft_terms.append(_Soft(rule, f"{label}: below minimum {lo}", short))
         if hi is not None and hi < upper:
             over = self.m.new_int_var(0, upper - hi, f"over_{rule.id}")
             self.m.add(expr - over <= hi)
-            self._soft_terms.append((rule, f"{label}: above maximum {hi}", over))
+            self._soft_terms.append(_Soft(rule, f"{label}: above maximum {hi}", over))
 
     # --- rule compilers -------------------------------------------------------------
 
@@ -181,13 +223,13 @@ class ScheduleModel:
             out_games = sum(self.plays[t, i] for i in outside)
             in_games = sum(self.plays[t, i] for i in window)
             if rule.hard:
-                self.m.add(out_games == 0)
-                self.m.add(in_games >= 1)
+                self._hard(self.m.add(out_games == 0))
+                self._hard(self.m.add(in_games >= 1))
                 continue
             missed = self.m.new_bool_var(f"window_{rule.id}_{t}")
             self.m.add(out_games <= len(outside) * missed)
             self.m.add(in_games >= 1 - missed)
-            self._soft_terms.append((rule, f"{t} {what} game outside window", missed))
+            self._soft_terms.append(_Soft(rule, f"{t} {what} game outside window", missed))
 
     def _matchup_games(self, rule: Rule) -> None:
         days = self._rule_days(rule)
@@ -316,14 +358,15 @@ class ScheduleModel:
             seq.append(v)
         return seq
 
-    def _enforce(self, rule: Rule, build: Callable[[], cp_model.Constraint], lits: list, label: str) -> None:
+    def _enforce(self, rule: Rule, build: Callable[[], cp_model.Constraint], lits: list, label: str,
+                 move: tuple[str, str, int] | None = None) -> None:
         """Add constraint `build()` when all `lits` hold; for soft rules allow breaking it at a cost."""
         if rule.hard:
-            build().only_enforce_if(lits)
+            build().only_enforce_if(lits + self._guard_lits())
             return
         broken = self.m.new_bool_var(f"broken_{rule.id}")
         build().only_enforce_if(lits + [~broken])
-        self._soft_terms.append((rule, label, broken))
+        self._soft_terms.append(_Soft(rule, label, broken, move))
 
     def _hosts(self, loc, t: str) -> set[str]:
         hosts = set(loc.hosts)
@@ -418,7 +461,7 @@ class ScheduleModel:
                     moved = self.m.new_bool_var(f"move_{rule.id}_{t}_{b}_{j}")
                     self.m.add(moved >= self._at(t, b, j) + sum(self._last_at(t, a, j - 1) for a in froms) - 1)
                     self._enforce(rule, lambda j=j: self.m.add(self._off(t, j - 1) >= rule.n), [moved],
-                                  f"{t}: moved to {b} on {self.dates[j]} with fewer than {rule.n} off days")
+                                  f"fewer than {rule.n} off days", move=(t, b, j))
 
     def _preferred_transition(self, rule: Rule) -> None:
         for t in sorted(rule.teams):
@@ -435,11 +478,13 @@ class ScheduleModel:
                         continue
                     left = sum(self._last_at(t, a, j - 1) for a in froms) + self._at(t, b, j)
                     if rule.hard:
-                        self.m.add(left <= 1)
+                        self._hard(self.m.add(left <= 1))
                     else:
                         wrong = self.m.new_bool_var(f"pref_{rule.id}_{t}_{b}_{j}")
                         self.m.add(left <= 1 + wrong)
-                        self._soft_terms.append((rule, f"{t}: went to {b} on {self.dates[j]}", wrong))
+                        wanted = "/".join(sorted(dests))
+                        self._soft_terms.append(_Soft(rule, f"next stop should have been {wanted}", wrong,
+                                                      move=(t, b, j)))
 
     def _home_away_run(self, rule: Rule) -> None:
         home = rule.role == "home"
@@ -497,6 +542,82 @@ class ScheduleModel:
                 label = f"{t}: games {self.dates[window[0]]} to {self.dates[window[-1]]}"
                 self._bound(rule, games, len(window), label, rule.min if full else None, rule.max)
 
+    # --- preferences --------------------------------------------------------------------
+
+    def _games_for(self, rule: Rule, i: int) -> list[cp_model.IntVar]:
+        """Games on day i involving the rule's Teams in its Role (each game counted once)."""
+        out = []
+        for h in self.teams:
+            for a in self.teams:
+                if h == a:
+                    continue
+                if rule.role == "home":
+                    hit = h in rule.teams
+                elif rule.role == "away":
+                    hit = a in rule.teams
+                else:
+                    hit = h in rule.teams or a in rule.teams
+                if hit:
+                    out.append(self.x[h, a, i])
+        return out
+
+    def _date_preference(self, rule: Rule) -> None:
+        listed = set(self._rule_days(rule))
+        if rule.option == "prefer":
+            counted = [g for i in self.days if i not in listed for g in self._games_for(rule, i)]
+            label = "games not on the preferred dates/days"
+        else:
+            counted = [g for i in listed for g in self._games_for(rule, i)]
+            label = "games on the avoided dates/days"
+        if counted:
+            total = self.m.new_int_var(0, len(counted), f"pref_{rule.id}")
+            self.m.add(total == sum(counted))
+            self._soft_terms.append(_Soft(rule, label, total))
+
+    def _balance(self, rule: Rule) -> None:
+        days = self._rule_days(rule)
+        teams = sorted(rule.teams)
+        if len(teams) < 2:
+            return
+        hi = self.m.new_int_var(0, len(days), f"bal_hi_{rule.id}")
+        lo = self.m.new_int_var(0, len(days), f"bal_lo_{rule.id}")
+        for t in teams:
+            count = sum(self._indicator(rule, t, i) for i in days)
+            self.m.add(count <= hi)
+            self.m.add(count >= lo)
+        if rule.hard:
+            self._hard(self.m.add(hi - lo <= rule.max))
+        else:
+            over = self.m.new_int_var(0, len(days), f"bal_over_{rule.id}")
+            self.m.add(hi - lo - over <= rule.max)
+            self._soft_terms.append(_Soft(rule, f"gap between teams above {rule.max}", over))
+
+    def _freeze_before_cutoff(self) -> None:
+        """Settings "Lock base before": the base run's games before the cutoff are locked (as Locks),
+        and no other games may be added before it."""
+        cutoff = self.run.settings.lock_base_before
+        if not cutoff or not self.run.base_games:
+            return
+        keep = {(g.home, g.away, self.day_index[g.date]) for g in self.run.base_games if g.date in self.day_index}
+        self._guard = self._new_guard(f"Lock base before {cutoff}: no new games before that date")
+        for (h, a, i), v in self.x.items():
+            if self.dates[i] < cutoff and (h, a, i) not in keep:
+                self._hard(self.m.add(v == 0))
+        self._guard = None
+
+    def _keep_base_games(self) -> None:
+        """Soft: keep the base run's games (Settings: Base run + Change weight)."""
+        weight = self.run.settings.change_weight
+        if not self.run.base_games or weight <= 0:
+            return
+        rule = Rule(id=CHANGE_RULE_ID, type="KEEP_BASE_GAMES", row=0, hard=False, weight=weight,
+                    note=f"Keep games from base run {self.run.settings.base_run}")
+        self.rules.append(rule)
+        for g in self.run.base_games:
+            if g.date in self.day_index and (g.home, g.away, self.day_index[g.date]) in self.x:
+                kept = self.x[g.home, g.away, self.day_index[g.date]]
+                self._soft_terms.append(_Soft(rule, f"{g.away} @ {g.home} on {g.date} moved", 1 - kept))
+
     # --- solving ----------------------------------------------------------------------
 
     def solve(self, time_limit: float | None = None, workers: int | None = None,
@@ -514,11 +635,12 @@ class ScheduleModel:
             cp_model.INFEASIBLE: "infeasible",
             cp_model.MODEL_INVALID: "invalid",
         }.get(code, "unknown")
-        result = SolveResult(status, skipped_rules=list(self.skipped), wall_time=elapsed)
+        result = SolveResult(status, skipped_rules=list(self.skipped), wall_time=elapsed, rules=self.rules)
         if status == "infeasible":
             result.message = "The hard rules contradict each other; no schedule satisfies all of them."
         elif status == "unknown":
-            result.message = "No schedule found within the time limit (the rules may be contradictory)."
+            result.message = ("No schedule found within the time limit. Try a longer time limit; if that "
+                              "doesn't help, the hard rules may be contradictory.")
         elif status == "invalid":
             result.message = f"Internal model error: {self.m.validate()}"
         if not result.has_schedule:
@@ -527,13 +649,73 @@ class ScheduleModel:
             (Game(self.dates[i], h, a) for (h, a, i), v in self.x.items() if solver.boolean_value(v)),
             key=lambda g: (g.date, g.home),
         )
-        for rule, label, expr in self._soft_terms:
-            amount = int(solver.value(expr))
+        hosts = {(t, g.date): g.home for g in result.games for t in (g.home, g.away)}
+        for term in self._soft_terms:
+            amount = int(solver.value(term.expr))
             if amount:
-                result.penalties.append(Penalty(rule, label, amount))
+                result.penalties.append(Penalty(term.rule, self._describe(term, hosts), amount))
         return result
+
+    def _describe(self, term: _Soft, hosts: dict[tuple[str, date], str]) -> str:
+        if term.move is None:
+            return term.label
+        t, b, j = term.move
+        origin = next((hosts[t, self.dates[i]] for i in range(j - 1, -1, -1) if (t, self.dates[i]) in hosts), "?")
+        return f"{t}: {origin} → {b} on {self.dates[j]}: {term.label}"
+
+    def find_conflicts(self, time_budget: float = DIAGNOSE_SECONDS) -> list[str] | None:
+        """In diagnose mode: a small set of hard rules (and locks) that can't all hold.
+
+        Solves with every hard rule switched on as an assumption; CP-SAT then reports a subset
+        of assumptions that is already contradictory. Re-solving with just that subset usually
+        shrinks it further. Returns None if nothing was found within the time budget.
+        """
+        assert self.diagnose, "build the model with diagnose=True"
+        deadline = time.monotonic() + time_budget
+        by_index = {lit.index: name for name, lit in self.guards.items()}
+        active = list(self.guards)
+        found = None
+        for _ in range(3):
+            remaining = deadline - time.monotonic()
+            if remaining <= 1:
+                break
+            solver = cp_model.CpSolver()
+            solver.parameters.max_time_in_seconds = remaining
+            solver.parameters.num_workers = min(8, os.cpu_count() or 1)
+            self.m.clear_assumptions()
+            self.m.add_assumptions([self.guards[n] for n in active])
+            if solver.solve(self.m) != cp_model.INFEASIBLE:
+                break
+            core = [by_index[i] for i in solver.sufficient_assumptions_for_infeasibility() if i in by_index]
+            if not core:
+                break
+            found = core
+            if len(core) == len(active):
+                break
+            active = core
+        self.m.clear_assumptions()
+        return found
+
+
+def _rule_description(rule: Rule) -> str:
+    text = f"{rule.id} ({rule.type}, Rules row {rule.row})"
+    return f"{text}: {rule.note}" if rule.note else text
+
+
+def _lock_description(lock: Lock) -> str:
+    where = "base run lock" if lock.from_base else f"Locks row {lock.row}"
+    return f"{where}: {lock.away} @ {lock.home} on {lock.date}"
 
 
 def solve(run: RunInput, time_limit: float | None = None, workers: int | None = None,
-          log: bool = False) -> SolveResult:
-    return ScheduleModel(run).solve(time_limit, workers, log)
+          log: bool = False, diagnose: bool = True) -> SolveResult:
+    """Solve `run`. If the hard rules contradict each other and `diagnose` is set, also work out
+    which rules conflict (result.conflicts)."""
+    result = ScheduleModel(run).solve(time_limit, workers, log)
+    if result.status == "infeasible" and diagnose:
+        conflicts = ScheduleModel(run, diagnose=True).find_conflicts()
+        if conflicts:
+            result.conflicts = conflicts
+            result.message = ("The hard rules contradict each other. These rules can't all hold at once; "
+                              "change, disable or soften at least one of them.")
+    return result

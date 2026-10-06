@@ -1,7 +1,7 @@
-"""Independent checks of sequence rules on a solved schedule (used by tests).
+"""Facts about a schedule computed directly from its game list.
 
-These recompute blocks, moves and runs directly from the game list, without
-the solver's model, so they catch modeling mistakes.
+Used for the Checks sheet and by tests: these don't use the solver's model, so
+they also catch modeling mistakes.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from wildflyer.solver import Game
+from .model import Game
 
 
 @dataclass(frozen=True)
@@ -77,3 +77,16 @@ def rematch_gaps(seq: list[Appearance]) -> list[int]:
             gaps.append((b[0].date - last_block_end[opp]).days)
         last_block_end[opp] = b[-1].date
     return gaps
+
+
+def span_days(run_: list[Appearance]) -> int:
+    """Calendar days from the first to the last game of a run, inclusive."""
+    return (run_[-1].date - run_[0].date).days + 1
+
+
+def compare(old: list[Game], new: list[Game]) -> tuple[list[Game], list[Game]]:
+    """Games only in `old` (removed) and games only in `new` (added)."""
+    old_set, new_set = set(old), set(new)
+    removed = sorted(old_set - new_set, key=lambda g: (g.date, g.home))
+    added = sorted(new_set - old_set, key=lambda g: (g.date, g.home))
+    return removed, added

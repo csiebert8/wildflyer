@@ -1,10 +1,10 @@
-"""Sequence rules (M3), verified with the independent checks in sequence_checks."""
+"""Sequence rules (M3), verified with the independent checks in wildflyer.analysis."""
 
 from collections import Counter
 
 import pytest
 
-from sequence_checks import blocks, max_streak, moves, off_days_between, rematch_gaps, runs, sequence
+from wildflyer.analysis import blocks, max_streak, moves, off_days_between, rematch_gaps, runs, sequence
 from test_solver import R, day, make_run
 from wildflyer.model import Location, Lock
 from wildflyer.solver import solve

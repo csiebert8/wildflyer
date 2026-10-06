@@ -1,9 +1,12 @@
-"""Write a solved schedule to an Excel workbook: Grid, List and Summary sheets."""
+"""Write a solved schedule to an Excel workbook.
+
+Sheets: Grid, List, Rules, Checks, Changes (only with a base run) and Summary.
+"""
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -11,6 +14,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from . import analysis
 from .model import RunInput
 from .solver import SolveResult
 
@@ -36,6 +40,10 @@ def write_output(path: str | Path, run: RunInput, result: SolveResult, input_pat
     if result.has_schedule:
         _grid(wb.active, run, result)
         _list(wb.create_sheet("List"), run, result)
+        _rules(wb.create_sheet("Rules"), result)
+        _checks(wb.create_sheet("Checks"), run, result)
+        if run.base_games:
+            _changes(wb.create_sheet("Changes"), run, result)
         _summary(wb.create_sheet("Summary"), run, result, input_path)
     else:
         _summary(wb.active, run, result, input_path)
@@ -198,6 +206,12 @@ def _summary(ws: Worksheet, run: RunInput, result: SolveResult, input_path: str 
         ("Soft cost", round(result.soft_cost, 2)),
         ("Solve time (s)", round(result.wall_time, 1)),
     ]
+    if run.base_games:
+        rows.append(("Base run", s.base_run))
+        if result.has_schedule:
+            removed, added = analysis.compare(run.base_games, result.games)
+            rows.append(("Changes vs base run", f"{len(removed)} base games moved or dropped, "
+                                                f"{len(added)} new games (see Changes)"))
     if result.message:
         rows.append(("Note", result.message))
     for label, value in rows:
@@ -205,17 +219,10 @@ def _summary(ws: Worksheet, run: RunInput, result: SolveResult, input_path: str 
         ws.cell(ws.max_row, 1).font = Font(bold=True)
 
     def table(title: str, header: tuple[str, ...], body: list[tuple]) -> None:
-        ws.append([])
-        ws.append([title])
-        ws.cell(ws.max_row, 1).font = Font(bold=True, size=12)
-        ws.append(list(header))
-        for i in range(1, len(header) + 1):
-            ws.cell(ws.max_row, i).fill, ws.cell(ws.max_row, i).font = HEADER_FILL, HEADER_FONT
-        for row in body:
-            ws.append(list(row))
-        if not body:
-            ws.append(["(none)"])
+        _table(ws, title, header, body)
 
+    if result.conflicts:
+        table("Conflicting hard rules", ("Rule",), [(c,) for c in result.conflicts])
     if result.has_schedule:
         grouped: dict[str, list] = defaultdict(list)
         for p in result.penalties:
@@ -227,6 +234,136 @@ def _summary(ws: Worksheet, run: RunInput, result: SolveResult, input_path: str 
                 body.append((rule_id, rule.type, p.label, p.amount, round(p.cost, 2)))
         table("Soft rule violations", ("Rule", "Type", "Where", "Units", "Cost"), body)
 
-    table("Rules not applied (rule type not supported yet)",
-          ("Rule", "Type", "Note"),
-          [(r.id, r.type, r.note) for r in result.skipped_rules])
+    if result.skipped_rules:
+        table("Rules not applied (rule type not supported yet)",
+              ("Rule", "Type", "Note"),
+              [(r.id, r.type, r.note) for r in result.skipped_rules])
+
+
+# --- shared table helper ----------------------------------------------------------------
+
+
+def _table(ws: Worksheet, title: str | None, header: tuple[str, ...], body: list[tuple],
+           blank_line: bool = True) -> None:
+    if blank_line and ws.max_row > 1:
+        ws.append([])
+    if title:
+        ws.append([title])
+        ws.cell(ws.max_row, 1).font = Font(bold=True, size=12)
+    ws.append(list(header))
+    for i in range(1, len(header) + 1):
+        ws.cell(ws.max_row, i).fill, ws.cell(ws.max_row, i).font = HEADER_FILL, HEADER_FONT
+    for row in body:
+        ws.append(list(row))
+    if not body:
+        ws.append(["(none)"])
+
+
+def _widths(ws: Worksheet, widths: tuple[float, ...]) -> None:
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+
+# --- Rules ------------------------------------------------------------------------------
+
+
+def _rules(ws: Worksheet, result: SolveResult) -> None:
+    """Every rule of the run and how the schedule did against it."""
+    _widths(ws, (8, 26, 8, 8, 22, 10, 10, 70))
+    units: Counter = Counter()
+    cost: Counter = Counter()
+    for p in result.penalties:
+        units[p.rule.id] += p.amount
+        cost[p.rule.id] += p.cost
+    skipped = {r.id for r in result.skipped_rules}
+    body = []
+    for r in result.rules:
+        if r.id in skipped:
+            status = "Not applied (not supported yet)"
+        elif r.hard:
+            status = "Met"
+        elif units[r.id]:
+            status = "Broken"
+        else:
+            status = "Met"
+        body.append((r.id, r.type, "Hard" if r.hard else "Soft", r.weight if not r.hard else None, status,
+                     units[r.id] or None, round(cost[r.id], 2) if cost[r.id] else None, r.note))
+    _table(ws, None, ("Rule", "Type", "Hard/Soft", "Weight", "Status", "Units", "Cost", "Note"), body,
+           blank_line=False)
+    ws.freeze_panes = "A2"
+    ws.append([])
+    ws.append(["Hard rules are always met in a returned schedule. Soft rule details are on the Summary sheet."])
+
+
+# --- Checks -----------------------------------------------------------------------------
+
+
+def _checks(ws: Worksheet, run: RunInput, result: SolveResult) -> None:
+    """Facts about the schedule, computed from the games (independent of the rules)."""
+    teams = list(run.teams)
+    _widths(ws, (18, 10, 10, 10, 12, 12, 12, 12, 12, 12, 12))
+    ws.append(["Schedule checks"])
+    ws.cell(1, 1).font = Font(bold=True, size=14)
+
+    # Per-team totals.
+    body = []
+    for t in teams:
+        seq = analysis.sequence(result.games, t)
+        moves = analysis.moves(seq)
+        home_runs, away_runs = analysis.runs(seq, True), analysis.runs(seq, False)
+        body.append((
+            t, len(seq), sum(a.home for a in seq), sum(not a.home for a in seq),
+            sum(a.home and a.date.weekday() >= 4 for a in seq),
+            max((analysis.span_days(r) for r in home_runs), default=0),
+            max((analysis.span_days(r) for r in away_runs), default=0),
+            analysis.max_streak(seq), len(moves),
+            min((analysis.off_days_between(a, b) for a, b in moves), default=None),
+            min(analysis.rematch_gaps(seq), default=None),
+        ))
+    _table(ws, "Teams", ("Team", "Games", "Home", "Away", "Home Fri-Sun", "Longest homestand (days)",
+                         "Longest road trip (days)", "Most game days in a row", "Moves",
+                         "Fewest off days on a move", "Shortest rematch gap (days)"), body)
+
+    # Matchup matrix: games each row team hosts each column team.
+    hosted = Counter((g.home, g.away) for g in result.games)
+    body = [(h, *[(hosted[h, a] if h != a else "-") for a in teams], sum(hosted[h, a] for a in teams))
+            for h in teams]
+    _table(ws, "Matchups: games the row team hosts the column team", ("Home / Away", *teams, "Total"), body)
+
+    # Games by weekday.
+    by_day = Counter(g.date.weekday() for g in result.games)
+    _table(ws, "Games by day of week", DAY_NAMES, [tuple(by_day[i] for i in range(7))])
+    per_date = Counter(g.date for g in result.games)
+    spread = Counter(per_date[d] for d in run.season_dates)
+    _table(ws, "Days by number of games", ("Games that day", "Days"),
+           [(n, spread[n]) for n in sorted(spread)])
+
+    # Every move between locations.
+    body = []
+    for t in teams:
+        for a, b in analysis.moves(analysis.sequence(result.games, t)):
+            body.append((t, a.host, b.host, a.date, b.date, analysis.off_days_between(a, b)))
+    _table(ws, "Moves between locations (location = home team)",
+           ("Team", "From", "To", "Last game", "Next game", "Off days"), body)
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell.value, date):
+                cell.number_format = "yyyy-mm-dd"
+
+
+# --- Changes ------------------------------------------------------------------------------
+
+
+def _changes(ws: Worksheet, run: RunInput, result: SolveResult) -> None:
+    removed, added = analysis.compare(run.base_games, result.games)
+    _widths(ws, (12, 8, 14, 40))
+    ws.append([f"Changes vs base run: {run.settings.base_run}"])
+    ws.cell(1, 1).font = Font(bold=True, size=14)
+    body = [(g.date, DAY_NAMES[g.date.weekday()], f"{g.away} @ {g.home}", "in base run, not in this one")
+            for g in removed]
+    body += [(g.date, DAY_NAMES[g.date.weekday()], f"{g.away} @ {g.home}", "new in this run") for g in added]
+    body.sort(key=lambda r: r[0])
+    _table(ws, f"{len(removed)} removed, {len(added)} added", ("Date", "Day", "Matchup", "Change"), body)
+    for row in ws.iter_rows(min_row=3):
+        if isinstance(row[0].value, date):
+            row[0].number_format = "yyyy-mm-dd"

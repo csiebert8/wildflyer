@@ -11,7 +11,7 @@ import openpyxl
 
 from . import selectors as sel
 from .catalog import CATALOG, FIELDS, RuleSpec
-from .model import Issue, Level, Lock, Rule, RunInput, Settings, Team
+from .model import Game, Issue, Level, Lock, Rule, RunInput, Settings, Team
 
 SHEET_SETTINGS = "Settings"
 SHEET_TEAMS = "Teams"
@@ -29,6 +29,7 @@ SETTINGS_KEYS = {
     "timelimitseconds": "Time limit (seconds)",
     "baserun": "Base run",
     "changeweight": "Change weight",
+    "lockbasebefore": "Lock base before",
 }
 
 _YES = {"y", "yes", "true", "1", "on"}
@@ -58,7 +59,36 @@ def load(path: str | Path) -> LoadResult:
         wb = openpyxl.load_workbook(path, data_only=True)
     except Exception as e:  # unreadable / not an xlsx
         return LoadResult(None, [Issue(Level.ERROR, str(path), f"can't open workbook: {e}")])
-    return _Loader(wb).run()
+    return _Loader(wb, Path(path).resolve().parent).run()
+
+
+def read_schedule(path: str | Path) -> list[Game]:
+    """Read the games from a schedule workbook written by `wildflyer solve` (its List sheet)."""
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except Exception as e:
+        raise ValueError(f"can't open schedule '{path}': {e}") from None
+    if "List" not in wb.sheetnames:
+        raise ValueError(f"'{path}' has no List sheet; is it a schedule written by wildflyer solve?")
+    rows = wb["List"].iter_rows(values_only=True)
+    header = [_norm(h) for h in next(rows, ())]
+    if "date" not in header or "matchup" not in header:
+        raise ValueError(f"'{path}': List sheet needs Date and Matchup columns")
+    di, mi = header.index("date"), header.index("matchup")
+    games = []
+    for r, row in enumerate(rows, start=2):
+        if row is None or all(_blank(v) for v in row):
+            continue
+        m = re.fullmatch(r"\s*(\w+)\s*@\s*(\w+)\s*", _text(row[mi]))
+        try:
+            d = sel.parse_date_cell(row[di])
+        except ValueError as e:
+            raise ValueError(f"'{path}' List row {r}: {e}") from None
+        if not m:
+            raise ValueError(f"'{path}' List row {r}: Matchup should look like 'AWAY @ HOME'")
+        games.append(Game(d, m.group(2).upper(), m.group(1).upper()))
+    wb.close()
+    return games
 
 
 def _norm(text: Any) -> str:
@@ -74,8 +104,9 @@ def _text(v: Any) -> str:
 
 
 class _Loader:
-    def __init__(self, wb: openpyxl.Workbook):
+    def __init__(self, wb: openpyxl.Workbook, folder: Path | None = None):
         self.wb = wb
+        self.folder = folder or Path.cwd()  # base-run paths are relative to the input file
         self.issues: list[Issue] = []
 
     def _issue(self, level: Level, sheet: str, msg: str, **kw: Any) -> None:
@@ -91,9 +122,53 @@ class _Loader:
         else:
             rules = self._rules(settings, teams)
             locks = self._locks(settings, teams)
+        base_games: list[Game] = []
+        if settings is not None and teams:
+            base_games, base_locks = self._base_run(settings, teams)
+            locks += base_locks
         if any(i.level is Level.ERROR for i in self.issues) or settings is None:
             return LoadResult(None, self.issues)
-        return LoadResult(RunInput(settings, teams, rules, locks), self.issues)
+        return LoadResult(RunInput(settings, teams, rules, locks, base_games), self.issues)
+
+    # --- base run ----------------------------------------------------------------------
+
+    def _base_run(self, settings: Settings, teams: dict[str, Team]) -> tuple[list[Game], list[Lock]]:
+        s = settings
+        if not s.base_run:
+            if s.lock_base_before:
+                self._issue(Level.ERROR, SHEET_SETTINGS, "'Lock base before' needs a Base run",
+                            field="Lock base before")
+            if s.change_weight:
+                self._issue(Level.WARNING, SHEET_SETTINGS, "Change weight is ignored without a Base run",
+                            field="Change weight")
+            return [], []
+        path = Path(s.base_run).expanduser()
+        candidates = [path] if path.is_absolute() else [self.folder / path, Path.cwd() / path]
+        found = next((p for p in candidates if p.is_file()), None)
+        if found is None:
+            self._issue(Level.ERROR, SHEET_SETTINGS, f"base run '{s.base_run}' not found (looked in "
+                        f"{', '.join(str(p.parent) for p in candidates)})", field="Base run")
+            return [], []
+        try:
+            games = read_schedule(found)
+        except ValueError as e:
+            self._issue(Level.ERROR, SHEET_SETTINGS, str(e), field="Base run")
+            return [], []
+        unknown = sorted({c for g in games for c in (g.home, g.away)} - set(teams))
+        if unknown:
+            self._issue(Level.ERROR, SHEET_SETTINGS, f"base run has teams not on the Teams sheet: "
+                        f"{', '.join(unknown)}", field="Base run")
+            return [], []
+        inside = [g for g in games if s.season_start <= g.date <= s.season_end]
+        if len(inside) < len(games):
+            self._issue(Level.WARNING, SHEET_SETTINGS, f"{len(games) - len(inside)} base-run game(s) outside "
+                        "the season are ignored", field="Base run")
+        if not s.change_weight and not s.lock_base_before:
+            self._issue(Level.WARNING, SHEET_SETTINGS, "Base run is only compared against: set Change weight "
+                        "and/or Lock base before to build from it", field="Base run")
+        locks = [Lock(0, g.date, g.home, g.away, from_base=True)
+                 for g in inside if s.lock_base_before and g.date < s.lock_base_before]
+        return inside, locks
 
     # --- sheet helpers ---------------------------------------------------------
 
@@ -164,6 +239,7 @@ class _Loader:
         change_weight = get("changeweight", sel.parse_number, default=0.0)
         run_name = get("runname", _text, default="")
         base_run = get("baserun", _text, default=None)
+        lock_before = get("lockbasebefore", sel.parse_date_cell, default=None)
         if time_limit is not None and time_limit <= 0:
             self._issue(Level.ERROR, SHEET_SETTINGS, "time limit must be positive", field="Time limit (seconds)")
         if change_weight is not None and change_weight < 0:
@@ -175,7 +251,7 @@ class _Loader:
             return None
         if (end - start).days > 400:
             self._issue(Level.WARNING, SHEET_SETTINGS, "season is longer than 400 days; check the dates")
-        return Settings(start, end, run_name, time_limit or 300, base_run, change_weight or 0.0)
+        return Settings(start, end, run_name, time_limit or 300, base_run, change_weight or 0.0, lock_before)
 
     # --- Teams ---------------------------------------------------------------------
 

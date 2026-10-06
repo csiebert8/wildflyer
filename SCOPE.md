@@ -1,6 +1,6 @@
 # Wildflyer — League Scheduler: MVP Scope
 
-Status: draft for review · Last updated 2026-10-05
+Status: MVP built (M1-M5) · Last updated 2026-10-06
 
 ## 1. Purpose
 
@@ -141,14 +141,17 @@ week) where meaningful, and can be hard or soft.
 
 ## 7. Runs & iteration
 
-- Each run is saved to `runs/<timestamp>_<name>/` containing the input
-  workbook as used, the output workbook, a solve log and the score.
-- **Locks:** pin games (or all games before a date) from a previous run.
-- **Minimize changes:** optional soft term penalizing each game that differs
-  from a base run.
-- **Compare:** score side by side and the list of games added / removed /
-  moved between two runs.
-- Interface: command line, e.g. `wildflyer solve inputs.xlsx --name v3`.
+- Without `-o`, each run is saved to `runs/<date-time>_<run name>/` containing
+  the rules workbook as used (`rules.xlsx`) and the output (`schedule.xlsx`,
+  whose Summary holds the status and score).
+- **Base run** (Settings): an earlier schedule workbook to build from.
+  - **Lock base before** (date): the schedule before that date is frozen
+    exactly as in the base run.
+  - **Change weight**: soft cost per base-run game that moves, so the solver
+    changes as little as possible.
+  - The output's **Changes** sheet lists games added / removed vs the base run.
+- **Compare:** `wildflyer compare old.xlsx new.xlsx` lists the games that differ.
+- Interface: command line (`wildflyer template | validate | solve | compare`).
 
 ## 8. Out of scope (MVP)
 

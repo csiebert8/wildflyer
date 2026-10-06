@@ -188,11 +188,13 @@ _SPECS = [
     # --- Preferences ----------------------------------------------------------------
     RuleSpec(
         "DATE_PREFERENCE", "Preferences",
-        "Favour (Option = prefer) or discourage (Option = avoid) games on matching dates. "
-        "Each matching game earns or costs Weight. Teams/Role narrow which games count.",
+        "Favour (Option = prefer) or discourage (Option = avoid) games on matching dates/days. "
+        "prefer: each game NOT on the listed dates/days costs Weight; avoid: each game ON them "
+        "costs Weight. Teams/Role narrow which games count (Role = home: games the Teams host); "
+        "each game is counted once.",
         {"teams": TEAMS, "role": ROLE, "dates": DATES_OPT, "days": DAYS_OPT},
         "Option = prefer, Days = Fri-Sun, Weight = 5",
-        options=("prefer", "avoid"), soft_only=True, violation_unit="game",
+        options=("prefer", "avoid"), soft_only=True, violation_unit="game outside / inside the dates",
     ),
     RuleSpec(
         "BALANCE", "Preferences",
