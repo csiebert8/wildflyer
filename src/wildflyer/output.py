@@ -39,8 +39,18 @@ def write_output(path: str | Path, run: RunInput, result: SolveResult, input_pat
         _summary(wb.create_sheet("Summary"), run, result, input_path)
     else:
         _summary(wb.active, run, result, input_path)
+    no_formulas(wb)
     wb.save(path)
     return path
+
+
+def no_formulas(wb: Workbook) -> None:
+    """Store text that starts with '=' as plain text; Excel rejects it as a broken formula otherwise."""
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.data_type == "f":
+                    cell.data_type = "s"
 
 
 def text_color(fill_hex: str) -> str:
@@ -131,13 +141,13 @@ def _grid(ws: Worksheet, run: RunInput, result: SolveResult) -> None:
     legend = totals_row + 2
     ws.cell(legend, 1, "Key:").font = Font(bold=True)
     ws.cell(legend, 2, "UTA").fill = PatternFill("solid", fgColor="D9D9D9")
-    ws.cell(legend, 3, "= home game vs UTA (cell in the home team's colour)")
+    ws.cell(legend, 3, "Home game vs UTA (cell in the home team's colour)")
     ws.cell(legend + 1, 2, "@UTA")
-    ws.cell(legend + 1, 3, "= away game at UTA")
+    ws.cell(legend + 1, 3, "Away game at UTA")
     ws.cell(legend + 2, 2).fill = WEEKEND_FILL
-    ws.cell(legend + 2, 3, "= Friday-Sunday")
+    ws.cell(legend + 2, 3, "Friday-Sunday")
     ws.cell(legend + 3, 2).fill = NO_GAMES_FILL
-    ws.cell(legend + 3, 3, "= no games scheduled that day")
+    ws.cell(legend + 3, 3, "No games scheduled that day")
 
     ws.column_dimensions["A"].width = 8
     ws.freeze_panes = ws.cell(GRID_FIRST_ROW, GRID_FIRST_COL)

@@ -240,3 +240,14 @@ def test_old_venue_columns_are_reported(tmp_path):
     result = load(path)
     assert result.ok
     assert any("unknown column" in m and "Venues" in m for m in messages(result, Level.WARNING))
+
+
+def test_template_has_no_formulas(tmp_path):
+    import zipfile
+
+    path = tmp_path / "t.xlsx"
+    build_workbook(rules=[{"ID": "R1", "Type": "TEAM_GAMES", "Note": "=not a formula"}]).save(path)
+    with zipfile.ZipFile(path) as z:
+        for name in z.namelist():
+            if name.startswith("xl/worksheets/"):
+                assert "<f>" not in z.read(name).decode(), name

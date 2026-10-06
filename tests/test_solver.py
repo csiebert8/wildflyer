@@ -251,3 +251,17 @@ def test_cli_solve(tmp_path, capsys):
     assert main(["solve", str(src), "-o", str(out), "--time-limit", "10"]) == 0
     assert out.exists()
     assert "Status: optimal" in capsys.readouterr().out
+
+
+def test_output_has_no_formulas(tmp_path):
+    """Excel 'repairs' files whose text cells look like broken formulas (e.g. '= home game')."""
+    import zipfile
+
+    run = make_run([DOUBLE_RR])
+    run.teams["T1"] = Team("T1", "=Team One", "4472C4")
+    result = solve(run, time_limit=20)
+    out = write_output(tmp_path / "o.xlsx", run, result)
+    with zipfile.ZipFile(out) as z:
+        for name in z.namelist():
+            if name.startswith("xl/worksheets/"):
+                assert "<f>" not in z.read(name).decode(), name

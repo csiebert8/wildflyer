@@ -13,6 +13,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .catalog import CATALOG, ROLES
+from .output import no_formulas
 from .loader import (LOCK_COLUMNS, RULE_COLUMNS, SETTINGS_KEYS, SHEET_LOCKS, SHEET_RULES, SHEET_SETTINGS,
                      SHEET_TEAMS, TEAM_COLUMNS)
 
@@ -53,6 +54,7 @@ def build_workbook(
     _table_sheet(wb.create_sheet(SHEET_LOCKS), LOCK_COLUMNS, locks, {"Date": 12, "Home": 8, "Away": 8})
     _help_sheet(wb.create_sheet("Help"))
     _rule_validations(wb, rules_ws)
+    no_formulas(wb)
     return wb
 
 
