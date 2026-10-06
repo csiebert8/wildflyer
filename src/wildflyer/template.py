@@ -151,8 +151,8 @@ def _help_sheet(ws: Worksheet) -> None:
     section("Definitions")
     for line in (
         ("Off day", "A date on which the team has no game."),
-        ("Block", "A run of a team's games against one opponent with no game against anyone else in "
-                  "between. Off days do not break a block."),
+        ("Block", "A series: a run of a team's games against one opponent at one location, with no "
+                  "other game in between. Off days do not break a block; a change of location does."),
         ("Move", "Two consecutive games of a team at different locations (different host teams)."),
         ("Homestand / road trip", "A run of consecutive home (or away) games of a team."),
     ):

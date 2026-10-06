@@ -380,41 +380,58 @@ class ScheduleModel:
 
     # --- sequence rules ------------------------------------------------------------------
 
+    # A block is a run of a team's games against one opponent at one location (host), with no
+    # other game in between. Off days don't break a block; a change of host does.
+
+    def _game_at(self, t: str, o: str, h: str, i: int) -> cp_model.IntVar:
+        """Bool: t plays o on day i, hosted by h (h is t or o)."""
+        return self.x[t, o, i] if h == t else self.x[o, t, i]
+
+    def _last_game_at(self, t: str, o: str, h: str, i: int) -> cp_model.IntVar:
+        """Bool: t's most recent game (on or before day i) was against o, hosted by h."""
+        cache = self._cache.setdefault("last_game_at", {})
+        if (t, o, h) not in cache:
+            cache[t, o, h] = self._carry(f"lastgame_{t}_{o}_{h}", t, lambda i: self._game_at(t, o, h, i))
+        return cache[t, o, h][i]
+
     def _opponent_block(self, rule: Rule) -> None:
         for t in sorted(rule.teams):
             for o in self._opponents(rule, t):
-                vs = [self._vs(t, o, i) for i in self.days]
-                # Games so far in the current block vs o (0 once t has played someone else).
-                count = self._counter(f"blk_{t}_{o}", vs, [[~v for v in vs]], t)
-                for i in self.days:
-                    d = self.dates[i]
-                    if rule.max is not None:
-                        self._enforce(rule, lambda i=i: self.m.add(count[i] <= rule.max), [vs[i]],
-                                      f"{t} vs {o}: game {rule.max + 1}+ of a block on {d}")
-                    if rule.min is not None and rule.min > 1 and i > 0:
-                        # Block vs o ended on day i (t now plays someone else).
-                        self._enforce(rule, lambda i=i: self.m.add(count[i - 1] >= rule.min),
-                                      [self.plays[t, i], ~vs[i], self._last_vs(t, o, i - 1)],
-                                      f"{t} vs {o}: block ending before {d} shorter than {rule.min}")
-                    if rule.n is not None and i > 0:
-                        self._enforce(rule, lambda i=i: self.m.add(self._off(t, i - 1) <= rule.n),
-                                      [vs[i], self._last_vs(t, o, i - 1)],
-                                      f"{t} vs {o}: more than {rule.n} off days inside block before {d}")
-                if rule.min is not None and rule.min > 1:
-                    last = len(self.dates) - 1
-                    self._enforce(rule, lambda: self.m.add(count[last] >= rule.min),
-                                  [self._last_vs(t, o, last)],
-                                  f"{t} vs {o}: season-ending block shorter than {rule.min}")
+                for h in (t, o):
+                    where = "home" if h == t else f"at {o}"
+                    game = [self._game_at(t, o, h, i) for i in self.days]
+                    # Games so far in the current block (0 once t has played any other game).
+                    count = self._counter(f"blk_{t}_{o}_{h}", game, [[~g for g in game]], t)
+                    for i in self.days:
+                        d = self.dates[i]
+                        if rule.max is not None:
+                            self._enforce(rule, lambda i=i, c=count: self.m.add(c[i] <= rule.max), [game[i]],
+                                          f"{t} vs {o} ({where}): game {rule.max + 1}+ of a block on {d}")
+                        if i == 0:
+                            continue
+                        in_block = self._last_game_at(t, o, h, i - 1)
+                        if rule.min is not None and rule.min > 1:
+                            # The block ended on day i: t played a different game.
+                            self._enforce(rule, lambda i=i, c=count: self.m.add(c[i - 1] >= rule.min),
+                                          [self.plays[t, i], ~game[i], in_block],
+                                          f"{t} vs {o} ({where}): block ending before {d} shorter than "
+                                          f"{rule.min}")
+                        if rule.n is not None:
+                            self._enforce(rule, lambda i=i: self.m.add(self._off(t, i - 1) <= rule.n),
+                                          [game[i], in_block],
+                                          f"{t} vs {o} ({where}): more than {rule.n} off days inside block "
+                                          f"before {d}")
+                    if rule.min is not None and rule.min > 1:
+                        last = len(self.dates) - 1
+                        self._enforce(rule, lambda c=count: self.m.add(c[last] >= rule.min),
+                                      [self._last_game_at(t, o, h, last)],
+                                      f"{t} vs {o} ({where}): season-ending block shorter than {rule.min}")
 
     def _rematch_gap(self, rule: Rule) -> None:
         n = rule.n
-        done: set[frozenset[str]] = set()
         for t in sorted(rule.teams):
             for o in self._opponents(rule, t):
-                if frozenset((t, o)) in done:
-                    continue  # the gap between t and o's blocks is the same from either side
-                done.add(frozenset((t, o)))
-                # since[i] = days since the last game vs o, capped at n.
+                # since[i] = days since t's last game vs o (any location), capped at n.
                 since = []
                 for i in self.days:
                     v = self.m.new_int_var(0, n, f"since_{t}_{o}_{i}")
@@ -428,10 +445,12 @@ class ScheduleModel:
                         self.m.add(v == n).only_enforce_if(~vs)
                     since.append(v)
                 for j in range(1, len(self.dates)):
-                    # A new block vs o starts on day j: the previous game vs o must be >= n days back.
-                    self._enforce(rule, lambda j=j: self.m.add(since[j - 1] + 1 >= n),
-                                  [self._vs(t, o, j), ~self._last_vs(t, o, j - 1)],
-                                  f"{t} vs {o}: rematch on {self.dates[j]} within {n} days")
+                    for h in (t, o):
+                        # A new block vs o (hosted by h) starts on day j: t's previous game vs o
+                        # must be at least n days back.
+                        self._enforce(rule, lambda j=j: self.m.add(since[j - 1] + 1 >= n),
+                                      [self._game_at(t, o, h, j), ~self._last_game_at(t, o, h, j - 1)],
+                                      f"{t} vs {o}: rematch on {self.dates[j]} within {n} days")
 
     def _opponent_change_rest(self, rule: Rule) -> None:
         days = set(self._rule_days(rule))

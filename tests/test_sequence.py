@@ -47,18 +47,28 @@ class TestOpponentBlock:
                 assert all(off_days_between(a, c) == 0 for a, c in zip(b, b[1:]))
 
     def test_gap_limit_inside_block(self):
-        result = solved([TWICE, R("OPPONENT_BLOCK", min=4, max=4, n=1)], n_days=40)
+        thrice = R("MATCHUP_GAMES", id="RR3", role="home", min=3, max=3)
+        result = solved([thrice, R("OPPONENT_BLOCK", min=3, max=3, n=1)], n_days=50)
         for s in seqs(result).values():
             for b in blocks(s):
-                assert len(b) == 4
+                assert len(b) == 3
                 assert all(off_days_between(a, c) <= 1 for a, c in zip(b, b[1:]))
 
     def test_soft_max_counts_extra_games(self):
-        # Lock T1 v T2 on three straight days; soft Max = 2 -> exactly one game beyond the limit.
-        locks = [Lock(2, day(0), "T1", "T2"), Lock(3, day(1), "T1", "T2"), Lock(4, day(2), "T2", "T1")]
-        result = solved([TWICE, R("OPPONENT_BLOCK", hard=False, weight=4, teams={"T1"}, opponents={"T2"}, max=2)],
-                        locks=locks)
+        # T1 hosts T2 on three straight days; soft Max = 2 -> exactly one game beyond the limit.
+        thrice = R("MATCHUP_GAMES", id="RR3", role="home", min=3, max=3)
+        locks = [Lock(2 + i, day(i), "T1", "T2") for i in range(3)]
+        result = solved([thrice, R("OPPONENT_BLOCK", hard=False, weight=4, teams={"T1"}, opponents={"T2"}, max=2)],
+                        n_days=40, locks=locks)
         assert result.soft_cost == 4
+
+    def test_home_and_away_are_separate_blocks(self):
+        # T1 v T2: 2 games at T1 then 1 at T2 -> blocks of 2 and 1, not one block of 3.
+        locks = [Lock(2, day(0), "T1", "T2"), Lock(3, day(1), "T1", "T2"), Lock(4, day(2), "T2", "T1"),
+                 Lock(5, day(3), "T3", "T1")]
+        rule = R("OPPONENT_BLOCK", hard=False, weight=4, teams={"T1"}, opponents={"T2"}, min=2)
+        result = solved([TWICE, rule], locks=locks)
+        assert any("block ending" in p.label and "at T2" in p.label for p in result.penalties)
 
 
 def test_rematch_gap():
@@ -71,7 +81,8 @@ def test_opponent_change_rest():
     result = solved([TWICE, PAIRS, R("OPPONENT_CHANGE_REST", n=1)], n_days=40)
     for s in seqs(result).values():
         for b1, b2 in zip(blocks(s), blocks(s)[1:]):
-            assert off_days_between(b1[-1], b2[0]) >= 1
+            if b1[0].opponent != b2[0].opponent:
+                assert off_days_between(b1[-1], b2[0]) >= 1
 
 
 class TestTravelRest:
@@ -156,3 +167,22 @@ class TestGamesInWindow:
             assert max(weeks.values()) <= 3
             full_weeks = {day(i).isocalendar()[1] for i in range(6, 27)}
             assert all(weeks[w] >= 2 for w in full_weeks)
+
+
+def test_block_is_one_location():
+    """Regression: a 3-game series must not mix venues (e.g. 1 game away + 2 at home)."""
+    thrice = R("MATCHUP_GAMES", id="RR3", role="home", min=3, max=3)
+    result = solved([thrice, R("OPPONENT_BLOCK", min=3, max=3, n=1)], n_days=45)
+    for t, s in seqs(result).items():
+        bl = blocks(s)
+        assert all(len(b) == 3 and len({a.host for a in b}) == 1 for b in bl), t
+        assert len(bl) == 6  # 3 opponents x (home + away)
+
+
+def test_rematch_gap_applies_between_home_and_away_series():
+    """A home series straight after an away series vs the same opponent is a rematch."""
+    thrice = R("MATCHUP_GAMES", id="RR3", role="home", min=3, max=3)
+    rules = [thrice, R("OPPONENT_BLOCK", min=3, max=3, n=1), R("REMATCH_GAP", n=7)]
+    result = solved(rules, n_days=60)
+    for s in seqs(result).values():
+        assert min(rematch_gaps(s)) >= 7

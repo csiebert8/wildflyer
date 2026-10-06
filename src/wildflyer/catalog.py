@@ -112,10 +112,11 @@ _SPECS = [
     # --- Sequence: opponents --------------------------------------------------------
     RuleSpec(
         "OPPONENT_BLOCK", "Sequence: opponents",
-        "Games against the same opponent come in blocks. A block is a run of a team's games "
-        "against one opponent with no game against anyone else in between (off days don't "
-        "break a block). Min/Max = games per block; N = most off days allowed between "
-        "consecutive games inside a block.",
+        "Games against the same opponent come in blocks (series). A block is a run of a team's "
+        "games against one opponent at one location, with no other game in between. Off days "
+        "don't break a block; a change of location does (home games and away games against the "
+        "same opponent are separate blocks). Min/Max = games per block; N = most off days "
+        "allowed between consecutive games inside a block.",
         {"teams": TEAMS, "opponents": OPPONENTS,
          "min": _f(False, "Minimum games per block"), "max": _f(False, "Maximum games per block"),
          "n": _f(False, "Max off days inside a block (blank = no limit)")},

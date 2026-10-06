@@ -27,9 +27,10 @@ def sequence(games: list[Game], team: str) -> list[Appearance]:
 
 
 def blocks(seq: list[Appearance]) -> list[list[Appearance]]:
+    """Runs of games against one opponent at one location (off days don't break a run)."""
     out: list[list[Appearance]] = []
     for a in seq:
-        if out and out[-1][-1].opponent == a.opponent:
+        if out and out[-1][-1].opponent == a.opponent and out[-1][-1].host == a.host:
             out[-1].append(a)
         else:
             out.append([a])
