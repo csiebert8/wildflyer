@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import base64
 import io
-from datetime import datetime
+import os
 import subprocess
 import sys
+import threading
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -209,6 +210,13 @@ st.markdown(f"""
   </div>
 </div>
 """, unsafe_allow_html=True)
+
+if os.environ.get("AUSL_DESKTOP"):  # packaged desktop app: no Terminal window to close
+    _, quit_col = st.columns([6, 1])
+    if quit_col.button("⏻ Quit app", width="stretch", help="Stop the AUSL Schedule Solver"):
+        st.info("AUSL Schedule Solver has stopped. You can close this browser tab.")
+        threading.Timer(1.0, lambda: os._exit(0)).start()
+        st.stop()
 
 job: Job | None = STORE["job"]
 busy = job is not None and job.running

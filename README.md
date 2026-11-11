@@ -7,7 +7,27 @@ it can. See [SCOPE.md](SCOPE.md) for the full MVP scope.
 **Status:** MVP complete (M1-M5) plus a local web app. Sized for leagues of about 6 teams, 60 days
 and 30 games per team.
 
-## Using the app (recommended)
+## Mac app (easiest to share)
+
+**Get it:** on GitHub, open **Actions → Build Mac app**, then:
+- Click **Run workflow** to build a fresh copy (about 10 minutes).
+- Open the finished run and download **AUSL-Schedule-Solver-mac** under *Artifacts*.
+- Pushing a tag like `v1.1` also publishes the zip as a GitHub Release.
+
+**Install:** unzip it and drag **AUSL Schedule Solver.app** into Applications.
+The app isn't signed with an Apple developer certificate, so the first time:
+1. Double-click it. macOS warns that it can't verify the developer; click **Done**.
+2. Open **System Settings → Privacy & Security**, scroll down, and click
+   **Open Anyway** next to *AUSL Schedule Solver*, then confirm.
+
+After that it opens normally. (On older macOS: right-click the app and choose **Open**.)
+
+**Use:** the app opens in your browser. Rules files and saved runs live in
+**Documents → AUSL Schedule Solver** (the first launch adds an example rules
+file). Click **Quit app** at the top of the page when you're done. Requires an
+Apple Silicon Mac (M1 or later).
+
+## Using the app from the source folder
 
 **Mac:** double-click **`AUSL Schedule Solver.command`** in the `wildflyer` folder. The
 first time, it sets everything up (a few minutes). Your browser then opens the

@@ -108,3 +108,17 @@ def test_app_page_stops_on_errors(tmp_path, monkeypatch):
     assert not at.exception
     assert any("to fix before solving" in e.value for e in at.error)
     assert not any(b.label == "▶ Solve" for b in at.button)
+
+
+def test_desktop_first_launch_seeds_data_folder(tmp_path, monkeypatch):
+    from wildflyer import desktop
+
+    monkeypatch.setenv("AUSL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(desktop, "bundle_dir", lambda: EXAMPLE.parent.parent)  # repo root holds examples/
+    folder = desktop.data_folder()
+    desktop._seed(folder)
+    assert (folder / "example_rules_2027.xlsx").is_file()
+    (folder / "example_rules_2027.xlsx").unlink()
+    (folder / "mine.xlsx").write_bytes(b"x")
+    desktop._seed(folder)  # existing rules files: don't add the example again
+    assert not (folder / "example_rules_2027.xlsx").exists()
