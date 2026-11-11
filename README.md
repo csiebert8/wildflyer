@@ -9,7 +9,13 @@ and 30 games per team.
 
 ## Mac app (easiest to share)
 
-**Get it:** on GitHub, open **Actions → Build Mac app**, then:
+**Build it on your Mac (simplest):** in the `wildflyer` folder, double-click
+**`Build Mac App.command`** (after running `AUSL Schedule Solver.command` at least
+once). A few minutes later Finder opens `dist/` with **AUSL Schedule Solver.app**
+and a zip to share. An app you build yourself opens without security warnings
+on your own Mac.
+
+**Or let GitHub build it:** open **Actions → Build Mac app**, then:
 - Click **Run workflow** to build a fresh copy (about 10 minutes).
 - Open the finished run and download **AUSL-Schedule-Solver-mac** under *Artifacts*.
 - Pushing a tag like `v1.1` also publishes the zip as a GitHub Release.
