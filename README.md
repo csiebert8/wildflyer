@@ -30,7 +30,9 @@ After that it opens normally. (On older macOS: right-click the app and choose **
 
 **Use:** the app opens in your browser. Rules files and saved runs live in
 **Documents → AUSL Schedule Solver** (the first launch adds an example rules
-file). Click **Quit app** at the top of the page when you're done. Requires an
+file). Click **Quit app** at the top of the page when you're done. If you just
+close the browser tab, the app quits by itself after 15 minutes with no page
+open (never during a solve). Requires an
 Apple Silicon Mac (M1 or later).
 
 ## Using the app from the source folder
@@ -55,7 +57,7 @@ The app only runs on this computer. Its workflow:
 2. **Check:** the file is checked automatically. Errors stop you, with
    sheet/row/column; warnings don't. After editing in Excel, save and click
    **Re-check file**.
-3. **Solve:** set the time limit and click **Solve**. You'll see time left,
+3. **Solve:** set the time limit (at most 5 minutes) and click **Solve**. You'll see time left,
    the best cost so far, and a **Stop and keep the best so far** button.
 4. **Result:** status, soft cost, a colored schedule preview, soft rule
    violations, rule statuses, team checks, and **Download schedule**.

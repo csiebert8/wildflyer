@@ -246,6 +246,10 @@ class _Loader:
         lock_before = get("lockbasebefore", sel.parse_date_cell, default=None)
         if time_limit is not None and time_limit <= 0:
             self._issue(Level.ERROR, SHEET_SETTINGS, "time limit must be positive", field="Time limit (seconds)")
+        if time_limit is not None and time_limit > 300:
+            self._issue(Level.WARNING, SHEET_SETTINGS, f"time limit {time_limit} s is above the 300 s (5 minute) "
+                        "maximum; 300 s will be used", field="Time limit (seconds)")
+            time_limit = 300
         if change_weight is not None and change_weight < 0:
             self._issue(Level.ERROR, SHEET_SETTINGS, "change weight can't be negative", field="Change weight")
         if start is None or end is None:

@@ -316,9 +316,10 @@ with tab_new:
             st.info(f"**Not solved yet** for this version of **{rules_path.name}**. {why} Click **Solve** "
                     "to build a schedule. Earlier results are saved under *Past runs & compare*.")
         c1, c2, _ = st.columns([1, 1, 2])
-        time_limit = c1.number_input("Time limit (seconds)", min_value=10, max_value=3600, step=10,
-                                     value=int(run.settings.time_limit_seconds), disabled=busy,
-                                     help="You can always stop early and keep the best schedule found so far.")
+        time_limit = c1.number_input("Time limit (seconds)", min_value=10, max_value=300, step=10,
+                                     value=min(int(run.settings.time_limit_seconds), 300), disabled=busy,
+                                     help="At most 300 seconds (5 minutes). You can always stop early and keep "
+                                          "the best schedule found so far.")
         c2.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
         if c2.button("▶ Solve", type="primary", disabled=busy, width="stretch"):
             STORE["job"] = start_job(rules_path, run, float(time_limit), WORKDIR / RUNS_DIR)

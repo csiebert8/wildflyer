@@ -122,3 +122,43 @@ def test_desktop_first_launch_seeds_data_folder(tmp_path, monkeypatch):
     (folder / "mine.xlsx").write_bytes(b"x")
     desktop._seed(folder)  # existing rules files: don't add the example again
     assert not (folder / "example_rules_2027.xlsx").exists()
+
+
+class TestIdleShutdown:
+    def test_quits_only_after_limit_with_no_page_and_no_solve(self):
+        from wildflyer.desktop import IdleWatch
+
+        w = IdleWatch(900, now=0)
+        assert not w.should_quit(1, False, 100)      # page open
+        assert not w.should_quit(0, False, 200)      # just closed: idle clock starts
+        assert not w.should_quit(0, False, 1000)     # 800 s idle
+        assert w.should_quit(0, False, 1100)         # 900 s idle
+
+    def test_solving_or_unknown_counts_as_in_use(self):
+        from wildflyer.desktop import IdleWatch
+
+        w = IdleWatch(900, now=0)
+        assert not w.should_quit(0, True, 5000)      # solve running, no page
+        assert not w.should_quit(None, False, 6000)  # can't tell: stay up
+        assert not w.should_quit(0, False, 6100)     # idle clock restarted at 6100
+        assert w.should_quit(0, False, 7000)
+
+    def test_never_opened_page_still_times_out(self):
+        from wildflyer.desktop import IdleWatch
+
+        w = IdleWatch(900, now=0)
+        assert w.should_quit(0, False, 900)
+
+
+def test_time_limit_capped_at_five_minutes(tmp_path):
+    from wildflyer.solver import MAX_TIME_LIMIT
+    from wildflyer.template import write_template
+    from test_solver import START, day
+
+    src = write_template(tmp_path / "r.xlsx", settings={"Season start": START, "Season end": day(13),
+                                                         "Time limit (seconds)": 1200},
+                         teams=[("T1", "One", ""), ("T2", "Two", "")],
+                         rules=[{"ID": "R1", "Type": "MATCHUP_GAMES", "Role": "home", "Min": 1, "Max": 1}])
+    result = load(src)
+    assert MAX_TIME_LIMIT == 300 and result.run.settings.time_limit_seconds == 300
+    assert any("300 s" in i.message for i in result.warnings)

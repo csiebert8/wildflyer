@@ -11,6 +11,8 @@ import os
 import shutil
 import socket
 import sys
+import threading
+import time
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -19,6 +21,7 @@ APP_NAME = "AUSL Schedule Solver"
 PORT = 8501
 DESKTOP_ENV = "AUSL_DESKTOP"  # tells app.py to show the Quit button
 NO_BROWSER_ENV = "AUSL_NO_BROWSER"  # set by automated tests: don't open a browser
+IDLE_MINUTES = float(os.environ.get("AUSL_IDLE_MINUTES", "15"))  # quit after this long with no page open
 
 
 def data_folder() -> Path:
@@ -56,6 +59,49 @@ def _seed(folder: Path) -> None:
         shutil.copy2(example, target)
 
 
+class IdleWatch:
+    """Decides when the app has been unused long enough to shut itself down.
+
+    "Unused" means no browser page connected to this app (other tabs and apps are
+    never looked at) and no solve running.
+    """
+
+    def __init__(self, limit_seconds: float, now: float):
+        self.limit = limit_seconds
+        self.idle_since: float | None = now  # idle from the start until the first page connects
+
+    def should_quit(self, open_pages: int | None, solving: bool, now: float) -> bool:
+        if open_pages is None or open_pages > 0 or solving:  # unknown counts as in use
+            self.idle_since = None
+            return False
+        if self.idle_since is None:
+            self.idle_since = now
+        return now - self.idle_since >= self.limit
+
+
+def _open_pages() -> int | None:
+    """Browser pages connected to this app right now, or None if it can't be told."""
+    try:
+        from streamlit import runtime
+
+        if not runtime.exists():
+            return None
+        return runtime.get_instance()._session_mgr.num_active_sessions()
+    except Exception:
+        return None
+
+
+def _watch_idle(limit_seconds: float, check_every: float = 30.0) -> None:
+    from .jobs import any_running
+
+    watch = IdleWatch(limit_seconds, time.monotonic())
+    while True:
+        time.sleep(check_every)
+        if watch.should_quit(_open_pages(), any_running(), time.monotonic()):
+            print(f"No page open for {limit_seconds / 60:g} minutes; shutting down.", flush=True)
+            os._exit(0)
+
+
 def main() -> int:
     url = f"http://localhost:{PORT}"
     if _running(PORT):  # already open: just bring the page back
@@ -73,6 +119,10 @@ def main() -> int:
     if getattr(sys, "frozen", False):  # no terminal in the .app: keep a log for troubleshooting
         log = open(folder / "app.log", "w", buffering=1)  # noqa: SIM115
         sys.stdout = sys.stderr = log
+
+    if IDLE_MINUTES > 0:
+        threading.Thread(target=_watch_idle, args=(IDLE_MINUTES * 60, min(30.0, IDLE_MINUTES * 30)),
+                         daemon=True, name="idle-shutdown").start()
 
     from streamlit.web import cli as stcli
 

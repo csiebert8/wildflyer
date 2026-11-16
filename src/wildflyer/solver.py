@@ -22,8 +22,9 @@ __all__ = ["Game", "Penalty", "SolveControl", "SolveResult", "ScheduleModel", "s
 # Soft weights may be decimals; CP-SAT needs integer objective coefficients.
 WEIGHT_SCALE = 100
 CHANGE_RULE_ID = "BASE"  # pseudo rule id for "keep base-run games" penalties
+MAX_TIME_LIMIT = 300  # seconds: a whole run (search + finding conflicts) never takes longer
 DIAGNOSE_MAX_SECONDS = 60  # most time spent finding the conflicting hard rules
-DIAGNOSE_MIN_SECONDS = 10  # least, even when the time limit is already used up
+DIAGNOSE_MIN_SECONDS = 3  # below this, there's no point starting the search for the cause
 MAX_CONFLICTS_SHOWN = 6  # a longer list means "too tight overall" rather than a specific clash
 TOO_TIGHT_MESSAGE = (
     "No schedule satisfies all the hard rules, and the cause couldn't be narrowed to a few rules in the "
@@ -713,7 +714,7 @@ class ScheduleModel:
 
     def solve(self, time_limit: float | None = None, workers: int | None = None,
               log: bool = False, control: SolveControl | None = None) -> SolveResult:
-        limit = float(time_limit or self.run.settings.time_limit_seconds)
+        limit = min(float(time_limit or self.run.settings.time_limit_seconds), MAX_TIME_LIMIT)
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = limit
         solver.parameters.num_workers = workers or min(8, os.cpu_count() or 1)
@@ -823,11 +824,16 @@ def solve(run: RunInput, time_limit: float | None = None, workers: int | None = 
           log: bool = False, diagnose: bool = True, control: SolveControl | None = None) -> SolveResult:
     """Solve `run`. If the hard rules contradict each other and `diagnose` is set, also work out
     which rules conflict (result.conflicts). `control` reports progress and allows stopping early."""
-    limit = float(time_limit or run.settings.time_limit_seconds)
+    limit = min(float(time_limit or run.settings.time_limit_seconds), MAX_TIME_LIMIT)
     result = ScheduleModel(run).solve(limit, workers, log, control)
-    if result.status == "infeasible" and diagnose and not (control and control.stopped):
-        # Stay within the user's time limit: diagnose with what's left of it (bounded both ways).
-        budget = min(DIAGNOSE_MAX_SECONDS, max(DIAGNOSE_MIN_SECONDS, limit - result.wall_time))
+    # Stay within the time limit: look for the cause with what's left of it (at most 60 s).
+    budget = min(DIAGNOSE_MAX_SECONDS, limit - result.wall_time)
+    if (result.status == "infeasible" and diagnose and not (control and control.stopped)
+            and budget < DIAGNOSE_MIN_SECONDS):
+        result.message = ("No schedule satisfies all the hard rules. The time limit was used up before "
+                          "the cause could be identified; try relaxing the hard rules you changed most "
+                          "recently.")
+    elif result.status == "infeasible" and diagnose and not (control and control.stopped):
         if control is not None:
             control.diagnose_started, control.diagnose_budget = time.monotonic(), budget
         conflicts = ScheduleModel(run, diagnose=True).find_conflicts(budget, control=control)

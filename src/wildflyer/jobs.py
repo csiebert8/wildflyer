@@ -51,11 +51,21 @@ class Job:
             self.control.phase = "done"
 
 
+_jobs: list[Job] = []  # every job started in this process
+
+
+def any_running() -> bool:
+    """True while any solve is in progress (the desktop app won't shut down mid-solve)."""
+    return any(j.running for j in _jobs)
+
+
 def start_job(rules_path: str | Path, run: RunInput, time_limit: float, runs_dir: Path = RUNS_DIR) -> Job:
     rules_path = Path(rules_path)
     digest = file_digest(rules_path)
     folder = new_run_folder(rules_path, run.settings.run_name or rules_path.stem, runs_dir)
     job = Job(rules_path, run, time_limit, folder, digest)
     job._thread = threading.Thread(target=job._work, name=f"solve-{folder.name}", daemon=True)
+    _jobs[:] = [j for j in _jobs if j.running]
+    _jobs.append(job)
     job._thread.start()
     return job
