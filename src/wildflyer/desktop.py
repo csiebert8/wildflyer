@@ -45,6 +45,26 @@ def _running(port: int) -> bool:
         return False
 
 
+def open_browser_when_ready(port: int, timeout: float = 120.0) -> threading.Thread:
+    """Open the app page once its server answers.
+
+    The server runs "headless" (Streamlit doesn't open a browser itself), because
+    otherwise Streamlit asks a one-time email question on the first run on a
+    computer, which an app without a terminal can never answer, so it would hang.
+    """
+    def wait_and_open() -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if _running(port):
+                webbrowser.open(f"http://localhost:{port}")
+                return
+            time.sleep(0.5)
+
+    thread = threading.Thread(target=wait_and_open, daemon=True, name="open-browser")
+    thread.start()
+    return thread
+
+
 def _port_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(("127.0.0.1", port)) != 0
@@ -128,9 +148,10 @@ def main() -> int:
 
     from .cli import APP_FLAGS
 
-    headless = "true" if os.environ.get(NO_BROWSER_ENV) else "false"
+    if not os.environ.get(NO_BROWSER_ENV):
+        open_browser_when_ready(port)
     sys.argv = ["streamlit", "run", str(bundle_dir() / "app.py"), *APP_FLAGS,
-                "--server.port", str(port), "--server.headless", headless,
+                "--server.port", str(port), "--server.headless", "true",
                 "--global.developmentMode", "false"]
     return stcli.main()
 

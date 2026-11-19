@@ -98,8 +98,11 @@ def _app(port: int) -> int:
     app = Path(__file__).with_name("app.py")
     print(f"Starting AUSL Schedule Solver at http://localhost:{port} (close this window or press Ctrl+C "
           "to quit)")
+    from .desktop import open_browser_when_ready
+
+    open_browser_when_ready(port)  # headless server: no first-run email question
     return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app), *APP_FLAGS,
-                            "--server.port", str(port), "--server.headless", "false"])
+                            "--server.port", str(port), "--server.headless", "true"])
 
 
 def _compare(old: str, new: str) -> int:
